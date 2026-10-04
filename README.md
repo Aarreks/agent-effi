@@ -4,17 +4,37 @@ Local LiveKit voice intake → FastAPI + SQLite → Next.js staff dashboard. The
 
 ## Run on Windows
 
-Prerequisites: Python 3.11–3.13, uv, and Node 22.22 or newer.
+Prerequisites: Git, Python 3.11–3.13, [uv](https://docs.astral.sh/uv/getting-started/installation/), and Node 22.22 or newer.
 
 ```powershell
+git clone https://github.com/Aarreks/agent-effi.git
+cd agent-effi
 .\setup.ps1
-# Connect LiveKit Cloud, or add OPENAI_API_KEY to .env using a local editor.
+# Complete the LiveKit Cloud credential steps below before launching.
 .\run.ps1
 ```
 
 Open http://127.0.0.1:3060/report to try resident reporting without a staff password. Open http://127.0.0.1:3060 for the protected staff workspace (API docs: http://127.0.0.1:8060/docs). Allow microphone access and start a call. The launcher starts the API and configured voice worker, and starts a local LiveKit server when the URL uses localhost. Cloud mode uses the Cloud room server. API and worker logs are in `data/`. Ctrl+C stops processes created by the launcher. For Chrome system-audio sharing during the debrief, open the same localhost URL in Chrome.
 
-The default `VOICE_PROVIDER=auto` uses LiveKit Inference when Cloud credentials are configured. This supplies speech recognition, the conversation model, speech synthesis, and structured call analysis through one LiveKit project, with no separate OpenAI, Deepgram, or voice-provider keys. Install the optional [LiveKit CLI](https://docs.livekit.io/intro/basics/cli/) on Windows with `winget install LiveKit.LiveKitCLI`. Authenticate with `lk cloud auth`, then run `lk app env --write --destination .env.local`. Copy its `LIVEKIT_URL`, `LIVEKIT_API_KEY`, and `LIVEKIT_API_SECRET` values into `.env`, preserving the other settings. Alternatively, obtain those three values from the LiveKit Cloud project settings and enter them locally. Never include either credentials file in a source archive. Set `VOICE_PROVIDER=livekit` explicitly if desired. Models and voice IDs are configurable in `.env`.
+## Get your own voice credentials (recommended: LiveKit Cloud)
+
+1. Sign in or create an account at [LiveKit Cloud](https://cloud.livekit.io/) and create a project. The project needs available LiveKit Inference usage or credit to run the voice models.
+2. In that project's settings, copy its **Project URL** (starts with `wss://`). Obtain an **API key** and its **API secret** from the project's API keys settings. Use credentials from the same project.
+3. Open the local `.env` created by `setup.ps1` (on macOS/Linux, copy `.env.example` to `.env` yourself). Replace all three local development values and select Cloud mode:
+
+   ```dotenv
+   VOICE_PROVIDER=livekit
+   LIVEKIT_URL=wss://YOUR-PROJECT.livekit.cloud
+   LIVEKIT_API_KEY=YOUR-PROJECT-API-KEY
+   LIVEKIT_API_SECRET=YOUR-PROJECT-API-SECRET
+   ```
+
+4. Leave the other settings in place. `OPENAI_API_KEY` can stay empty: this mode uses LiveKit Inference for speech recognition, replies, speech synthesis, supervision, and analysis. It needs no separate OpenAI, Deepgram, or Fish Audio keys. Setup generates the local staff password and worker/signing secrets automatically.
+5. Run `.\run.ps1`, keep the terminal open, and visit **http://127.0.0.1:3060/report**. To inspect staff records, visit **http://127.0.0.1:3060** and use the generated password in `data/staff-login.txt`.
+
+The voice worker runs locally. You do not need to create or deploy an agent in the Cloud dashboard, buy a phone number, or start a local LiveKit server for this mode. Actual `.env` files and data are excluded from the repository; every reviewer supplies their own credentials. Restart the launcher after changing credentials. Models and voice IDs are configurable in `.env`. See the [LiveKit CLI setup guide](https://docs.livekit.io/reference/developer-tools/livekit-cli/) for account authentication and project setup.
+
+Alternatively, install the CLI on Windows with `winget install LiveKit.LiveKitCLI`, authenticate using `lk cloud auth`, and run `lk app env --write --destination .env.local` from this repository. Copy its three `LIVEKIT_*` connection values into `.env`, preserving the other settings. The app reads `.env`; creating only `.env.local` is insufficient. Never include either credentials file in a source archive.
 
 The alternative `VOICE_PROVIDER=openai` uses OpenAI Realtime and structured Responses analysis. With the local LiveKit server, only `OPENAI_API_KEY` needs external account access and credit. Missing credentials disable voice explicitly; they do not silently substitute a simulated conversation. All model/provider choices are implementation choices, not additional take-home requirements.
 
