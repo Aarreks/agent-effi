@@ -41,11 +41,12 @@ When the resident is done, briefly summarize the recorded outcome and say they m
 
 
 class ServiceAgent(Agent):
-    def __init__(self,call_id,client):
-        super().__init__(instructions=INSTRUCTIONS)
+    def __init__(self,call_id,client,public=False):
+        super().__init__(instructions=INSTRUCTIONS+('\nCall entry point: public resident reporting page; no staff sign-in.' if public else '\nCall entry point: signed-in staff dashboard, simulating resident intake.'))
         self.call_id=call_id
         self.client=client
         self.emergency_active=False
+        self.public=public
 
     async def on_user_turn_completed(self,turn_ctx,new_message):
         self.emergency_active,urgent=emergency_turn(new_message.text_content or '',self.emergency_active)
@@ -64,7 +65,7 @@ class ServiceAgent(Agent):
         latest=next((item for item in reversed(chat_ctx.items) if isinstance(item,ChatMessage) and item.role=='user'),None)
         if latest:
             _,urgent=emergency_turn(latest.text_content or '',self.emergency_active)
-            fixed=urgent or capability_reply(latest.text_content or '')
+            fixed=urgent or capability_reply(latest.text_content or '',public=self.public)
             if fixed:
                 async def urgent_speech():
                     yield fixed
@@ -167,7 +168,9 @@ async def service_session(ctx: JobContext):
         raise ValueError('Dispatch metadata requires call_id')
     client=httpx.AsyncClient(base_url=os.getenv('BACKEND_URL','http://127.0.0.1:8060'),timeout=10,
                              headers={'Authorization':'Bearer '+os.getenv('VOICE_WORKER_TOKEN',''),'X-Call-ID':call_id})
-    service_agent=ServiceAgent(call_id,client)
+    call_response=await client.get(f'/calls/{call_id}')
+    call_response.raise_for_status()
+    service_agent=ServiceAgent(call_id,client,public=call_response.json().get('entry_point')=='public')
     queue=asyncio.Queue()
     failed_events=[]
 

@@ -5,14 +5,19 @@ import type {Room} from 'livekit-client';
 import {createJsonClient,errorMessage} from '@/lib/api';
 const api=createJsonClient();
 
-export function VoicePanel({configured,onCall}:{configured:boolean;onCall:(id:string)=>void}) {
+export function VoicePanel({configured,onCall,publicMode=false}:{configured:boolean;onCall:(id:string,token?:string)=>void;publicMode?:boolean}) {
   const [phase,setPhase]=useState('idle'); const [error,setError]=useState('');
   const [muted,setMuted]=useState(false); const [text,setText]=useState('');
   const room=useRef<Room|null>(null); const call=useRef<string|null>(null);
+  const accessToken=useRef<string|undefined>(undefined);
   const audioRoot=useRef<HTMLDivElement>(null);
   const timeout=useRef<ReturnType<typeof setTimeout>|null>(null);
   const generation=useRef(0);
   useEffect(()=>()=>{if(timeout.current)clearTimeout(timeout.current);void room.current?.disconnect()},[]);
+
+  async function finish(id:string,token=accessToken.current){
+    return api(`${publicMode?'/public':''}/calls/${id}/finish`,{method:'POST',...(publicMode?{headers:{Authorization:`Bearer ${token}`}}:{})});
+  }
 
   async function end() {
     const operation=++generation.current;
@@ -21,7 +26,7 @@ export function VoicePanel({configured,onCall}:{configured:boolean;onCall:(id:st
     call.current=null;room.current=null;setPhase('idle');
     audioRoot.current?.replaceChildren();
     await connection?.disconnect();
-    if(current)try{await api(`/calls/${current}/finish`,{method:'POST'})}catch(e){if(operation===generation.current)setError(errorMessage(e))}
+    if(current)try{await finish(current)}catch(e){if(operation===generation.current)setError(errorMessage(e))}
   }
 
   async function start() {
@@ -32,9 +37,10 @@ export function VoicePanel({configured,onCall}:{configured:boolean;onCall:(id:st
       const permission=await navigator.mediaDevices.getUserMedia({audio:true});
       permission.getTracks().forEach(track=>track.stop());
       if(operation!==generation.current)return;
-      const info=await api<{call_id:string;url:string;token:string}>('/voice/session',{method:'POST'});
-      if(operation!==generation.current){await api(`/calls/${info.call_id}/finish`,{method:'POST'});return}
-      call.current=info.call_id;onCall(info.call_id);
+      const info=await api<{call_id:string;url:string;token:string;access_token?:string}>(`${publicMode?'/public':''}/voice/session`,{method:'POST'});
+      if(operation!==generation.current){await finish(info.call_id,info.access_token);return}
+      accessToken.current=info.access_token;
+      call.current=info.call_id;onCall(info.call_id,info.access_token);
       const {Room,RoomEvent,Track}=await import('livekit-client');
       if(operation!==generation.current)return;
       const connection=new Room();room.current=connection;
@@ -60,11 +66,11 @@ export function VoicePanel({configured,onCall}:{configured:boolean;onCall:(id:st
     <div className="eyebrow">RESIDENT LINE</div><h2>Talk to Effi</h2><p className="muted">Report a service issue or check an existing request.</p>
     <div className={`voice-orb ${connected?'on':''}`} aria-hidden="true"><Mic size={34}/></div>
     <div className="voice-state" role="status">{phase==='idle'?'Ready when you are':phase==='connecting'?'Connecting…':phase==='waiting'?'Waiting for the agent…':'Voice session connected'}</div>
-    {!configured&&<p className="setup">Connect LiveKit Cloud or add an OpenAI API key to <code>submission/.env</code>, then restart.</p>}
+    {!configured&&<p className="setup">{publicMode?'Voice reporting is currently unavailable. Please try again later.':<>Connect LiveKit Cloud or add an OpenAI API key to <code>submission/.env</code>, then restart.</>}</p>}
     {phase==='idle'?<button className="primary wide" disabled={!configured} onClick={start}><Phone size={17}/> Start voice call</button>:<div className="call-controls"><button disabled={!connected} onClick={toggleMic}>{muted?<MicOff size={18}/>:<Mic size={18}/>} {muted?'Unmute':'Mute'}</button><button className="danger" onClick={()=>void end()}><PhoneOff size={18}/> End call</button></div>}
     {connected&&<><form onSubmit={send} className="text-turn"><label className="sr-only" htmlFor="message">Message the voice agent</label><input id="message" value={text} onChange={e=>setText(e.target.value)} placeholder="Or type to the same agent"/><button aria-label="Send message" disabled={!text.trim()}><Send size={17}/></button></form><button className="link" onClick={()=>void room.current?.startAudio()}>Enable sound</button></>}
     {error&&<p className="error" role="alert">{error}</p>}
     <div ref={audioRoot} className="audio-root"/>
-    <div className="voice-foot">Staff workspace · calls simulate resident intake. Requests are recorded for staff review.</div>
+    <div className="voice-foot">{publicMode?'Demo calls and reports are recorded for staff review. Please use fictional details.':'Staff workspace · calls simulate resident intake. Requests are recorded for staff review.'}</div>
   </section>
 }

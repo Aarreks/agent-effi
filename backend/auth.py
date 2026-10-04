@@ -11,6 +11,7 @@ import uuid
 
 COOKIE_NAME = 'effigov_staff'
 SESSION_SECONDS = 8 * 60 * 60
+RESIDENT_SECONDS = 60 * 60
 
 
 class AuthConfigurationError(ValueError):
@@ -125,3 +126,33 @@ def worker_call_id(value: str | None) -> str | None:
     except (ValueError, AttributeError):
         return None
     return parsed if value == parsed else None
+
+
+def resident_token(call_id: str, *, now: float | None = None) -> str:
+    """One-hour capability for a single public call, never a staff session."""
+    if not worker_call_id(call_id):
+        raise ValueError('Invalid call ID')
+    issued = int(time.time() if now is None else now)
+    payload = dict(kind='resident', call_id=call_id, issued=issued, expires=issued + RESIDENT_SECONDS)
+    body = base64.urlsafe_b64encode(json.dumps(payload, separators=(',', ':')).encode()).decode().rstrip('=')
+    return body + '.' + _signature(body, _secret('SESSION_SECRET'))
+
+
+def verify_resident(authorization: str | None, call_id: str, *, now: float | None = None) -> bool:
+    try:
+        if not isinstance(authorization, str) or len(authorization) > 4096:
+            return False
+        scheme, _, token = authorization.partition(' ')
+        body, _, signature = token.partition('.')
+        if scheme.lower() != 'bearer' or not re.fullmatch(r'[A-Za-z0-9_-]+', body) or not re.fullmatch(r'[a-f0-9]{64}', signature):
+            return False
+        if not hmac.compare_digest(signature, _signature(body, _secret('SESSION_SECRET'))):
+            return False
+        payload = json.loads(base64.b64decode(body + '=' * (-len(body) % 4), altchars=b'-_', validate=True))
+        if not isinstance(payload, dict) or payload.get('kind') != 'resident' or payload.get('call_id') != call_id or not worker_call_id(call_id):
+            return False
+        issued, expires = payload.get('issued'), payload.get('expires')
+        return (type(issued) is int and type(expires) is int and expires - issued == RESIDENT_SECONDS
+                and issued <= (time.time() if now is None else now) < expires)
+    except (AuthConfigurationError, ValueError, TypeError, UnicodeError):
+        return False

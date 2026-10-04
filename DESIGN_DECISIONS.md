@@ -52,11 +52,15 @@ This is the running explanation of the current app. Updated as decisions change.
 
 **An emergency takes priority over service intake.** The earlier rehearsal correctly said the app could not call 911, but then offered routine municipal help. That was a poor response. Explicit danger reports such as a flipped car now receive a fixed emergency direction through the speech pipeline, without waiting for the conversation model or a database lookup. Ordinary case actions pause until the caller confirms safety and that help is arranged or the scenario was a test. Other emergency descriptions are covered by the agent's instructions; the small phrase detector is not a complete emergency classifier. The app never places an emergency call, transfers a call, or claims responders were contacted.
 
-**The caller's role and the dashboard login are different.** Staff sign into this internal workspace. A voice call simulates the resident intake workflow. The agent uses fixed wording to explain both when asked, rather than implying the logged-in user has become a different kind of account.
+**Residents can try reporting without a staff login.** The public page at `/report` starts the same real voice flow. It shows that visitor's conversation and a case confirmation. The staff dashboard remains separate and protected. Each public call gets a signed token that expires after one hour and permits reading or ending only that call. The page keeps this token in memory. It cannot use it to browse other calls, read staff records, or change a service status.
 
-**I do not promise note privacy that the app does not enforce.** Staff can see case notes, and voice lookup can return them. There is no separate resident portal or staff-only note rule. A fixed answer states these app facts when the caller asks about note visibility; the supervisor can correct an unsupported privacy promise. Ordinary requests to add notes still use the case tool.
+**The caller's role and the dashboard login are different.** The agent knows whether the call started on the public page or in the signed-in staff dashboard. Both use resident intake tools. Starting a call from the dashboard does not grant the voice model staff editing permissions.
+
+**I do not promise note privacy that the app does not enforce.** Staff can see case notes, and voice lookup can return them. The public page's data response excludes notes and staff analysis, but voice lookup still has no resident identity check. A fixed answer states these app facts when the caller asks about note visibility; the supervisor can correct an unsupported privacy promise. Ordinary requests to add notes still use the case tool. Use fictional details in the demo.
 
 **A reported correction is different from a changed field.** If the caller reports a new address, voice records a note for staff. Until staff edit the address field, the agent must distinguish the saved address from the correction in the note.
+
+**Model quality is not the only source of mistakes.** In the latest microphone rehearsal, the agent shortened a saved case number and blurred a saved address with a correction note. The supervisor caught the case number, but its current checks do not cover address claims. Speech recognition also misheard words. Separately, a recognized interruption was missing from the saved transcript, and logs showed delays while creating supervisor network clients. Those are integration limitations, not evidence that simply buying a stronger model solves everything. The public confirmation now displays the exact case number and saved location directly from the database.
 
 **A limited lookup is not a count of every case someone has.** Lookup supports case ID or phone, not name-only search. It returns at most five matches. The agent must describe those matches, distinguish open from resolved cases, and avoid claiming a complete total.
 
@@ -82,7 +86,7 @@ The user's physical microphone, browser permissions, and screen-share audio stil
 
 **What happens if the live connection drops?** “The browser reconnects and fetches current records. Periodic checks keep the dashboard useful while that happens.”
 
-**How is access controlled?** “Staff sign in to open the workspace. The voice worker uses a different credential and can only use the routes for its current call and linked case. The model gets four named tools. It cannot send arbitrary database queries or change staff status.”
+**How is access controlled?** “Staff sign in to open the workspace. A public visitor can start a call and gets permission to view only that conversation. The voice worker uses a different credential and can only use the routes for its current call and linked case. The model gets four named tools. It cannot send arbitrary database queries or change staff status.”
 
 **What would you add for real use?** “Individual staff accounts, resident identity checks, and operational monitoring. The local demo has staff sign-in and restricted worker access, but a phone number alone does not prove who a resident is.”
 
@@ -99,7 +103,7 @@ The user's physical microphone, browser permissions, and screen-share audio stil
 - Concurrent-update review: added the case snapshot attached to each assistant turn so background checks use the right facts.
 - Live caption review: separated temporary recognition text from saved transcript turns, and prevented an old transcript retry from clearing a newer caption.
 
-**Staff and AI have different permissions.** Staff sign in with a local password. Their browser gets a signed cookie that expires after eight hours. The voice worker uses a separate secret kept in its process. The backend checks every request against the worker's call ID and permitted routes. The AI cannot list all cases or change staff status. Anonymous requests cannot read or write case data.
+**Staff and AI have different permissions.** Staff sign in with a local password. Their browser gets a signed cookie that expires after eight hours. The voice worker uses a separate secret kept in its process. The backend checks every request against the worker's call ID and permitted routes. The AI cannot list all cases or change staff status. Public visitors can launch voice intake; their browser can read or end only its own call, using a separate token.
 
 **I refresh case facts before each resident turn.** Staff can change status during a conversation. The agent receives the current saved status before answering and is instructed to look it up again for each status question. Earlier conversation results must not stand in for the current record.
 
@@ -108,3 +112,4 @@ The user's physical microphone, browser permissions, and screen-share audio stil
 - Physical microphone rehearsal: found two supervisor false positives at the end of a successful creation. Added checks for interrupted fragments, confirmed saves, and matching status wording, with regression tests preserving real-error detection.
 - Manual live status rehearsal: staff changed a case from New to Resolved during the call. The next voice lookup read the saved status. When the caller disputed resolution, the agent saved their feedback as a note and kept staff status unchanged. The same call exposed confusing role wording and an unsupported claim about who can see notes; these need clearer language.
 - Whole-call policy review: added urgent-response handling, paused routine tools during emergencies, clarified staff login versus resident workflow and note visibility, stopped name-only search promises, separated canonical addresses from reported corrections, and limited case-count claims to returned matches. Post-call analysis now includes material emergency disclosures even after a goodbye.
+- Public reporting: added `/report` without staff sign-in, reused the real voice flow, scoped visitor access to one call, excluded staff data from public responses, and added a confirmation built directly from the database. The public page shows the exact saved case number even if the agent misreads it.

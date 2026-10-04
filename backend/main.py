@@ -64,6 +64,16 @@ async def access_control(request,call_next):
     path=request.url.path
     if path=='/health':return await call_next(request)
     if not auth.configured():return JSONResponse(status_code=503,content={'detail':'Staff access is not configured. Run the setup script.'})
+    if path.startswith('/public/'):
+        if not trusted_origin(request.headers.get('origin')):
+            return JSONResponse(status_code=403,content={'detail':'Untrusted origin'})
+        if path=='/public/voice/session' and request.method=='POST':
+            return await call_next(request)
+        match=re.fullmatch(r'/public/calls/([a-f0-9-]+)(/finish)?',path)
+        if (match and request.method==('POST' if match.group(2) else 'GET')
+                and auth.verify_resident(request.headers.get('authorization'),match.group(1))):
+            return await call_next(request)
+        return JSONResponse(status_code=401,content={'detail':'Access is limited to your own call'})
     if path in {'/auth/login','/auth/me'}:
         if request.method!='GET' and not trusted_origin(request.headers.get('origin')):
             return JSONResponse(status_code=403,content={'detail':'Untrusted origin'})
@@ -96,6 +106,7 @@ async def access_control(request,call_next):
 
 
 login_failures={}
+public_starts={}
 
 class StaffLogin(BaseModel):
     password: str=Field(max_length=1024)
@@ -341,9 +352,44 @@ async def retry_analysis(call_id: str,tasks: BackgroundTasks):
 
 @app.post('/voice/session',status_code=201)
 async def voice_session():
+    return await start_voice_session()
+
+
+@app.post('/public/voice/session',status_code=201)
+async def resident_voice_session(request: Request):
+    host=request.client.host if request.client else 'unknown'
+    attempts=[t for t in public_starts.get(host,[]) if time.monotonic()-t<60]
+    public_starts[host]=attempts
+    if len(attempts)>=5:raise HTTPException(429,'Please wait a minute before starting another call.')
+    attempts.append(time.monotonic())
+    return await start_voice_session(public=True)
+
+
+@app.get('/public/calls/{call_id}')
+async def resident_call(call_id: str):
+    call=store.call(call_id)
+    # Explicit projection: never return case snapshots, notes, audit, or staff analysis.
+    result={key:call.get(key) for key in ['id','status','case_id','started_at','ended_at','error','intake','intake_stage']}
+    result['transcript']=[{key:turn[key] for key in ['id','role','text','at']} for turn in call['transcript']]
+    result['live_caption']=captions.get(call_id)
+    result['receipt']=None
+    if call['case_id']:
+        case=store.case(call['case_id'])
+        result['receipt']={key:case[key] for key in ['id','status','issue_type','location']}
+    return result
+
+
+@app.post('/public/calls/{call_id}/finish')
+async def resident_finish(call_id: str,tasks: BackgroundTasks):
+    await finish(call_id,tasks)
+    return {'ended':True}
+
+
+async def start_voice_session(public=False):
     if not configured():
         raise HTTPException(503,'Connect LiveKit Cloud or set OPENAI_API_KEY in submission/.env and restart to enable AI voice.')
     call=store.start_call()
+    if public:store.update_call(call['id'],entry_point='public')
     notify('call',call['id'])
     room='effigov-'+call['id']
     url=os.getenv('LIVEKIT_URL','ws://127.0.0.1:7880')
@@ -358,7 +404,9 @@ async def voice_session():
         notify('call',call['id'])
         raise HTTPException(503,'Cannot connect to LiveKit. Start the server and voice worker.') from exc
     token=(api.AccessToken(key,secret).with_identity('resident-'+uuid.uuid4().hex).with_name('Resident').with_grants(api.VideoGrants(room_join=True,room=room)).with_ttl(__import__('datetime').timedelta(minutes=30)).to_jwt())
-    return dict(call_id=call['id'],url=url,token=token)
+    result=dict(call_id=call['id'],url=url,token=token)
+    if public:result['access_token']=auth.resident_token(call['id'])
+    return result
 
 
 @app.websocket('/events')

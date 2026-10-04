@@ -2,11 +2,13 @@
 
 ## Your first microphone test
 
-Open http://127.0.0.1:3060 in Chrome. Sign in using the password in `data/staff-login.txt`. Use headphones to prevent the agent's speech feeding back into your microphone. Click **Start voice call** and allow microphone access. Wait for the greeting. If playback is blocked, click **Enable sound**.
+Open http://127.0.0.1:3060/report in Chrome. No staff sign-in is needed to report; this page shows only your conversation and case confirmation. In a second tab, open http://127.0.0.1:3060 and sign into the staff workspace using the password in `data/staff-login.txt`. Use headphones to prevent the agent's speech feeding back into your microphone. On the public page, click **Start voice call** and allow microphone access. Wait for the greeting. If playback is blocked, click **Enable sound**.
 
 Say: “I want to report missed trash collection.” Answer its questions with fictional details: **Morgan Reed**, **202-555-0176**, **42 Oak Street**, and “The bin was out this morning, but collection was missed.” Confirm the read-back. The agent should announce a case number only after the case is actually saved.
 
 End the call. Check that the case appears in **Cases** with the correct details and **New** status. Open the related call and confirm that its transcript and completed analysis describe what happened. The analysis can take several seconds after ending.
+
+For the public-access check, open `/report` in a private browser window: it should work without a password. The staff workspace should still show its sign-in screen. Public reports appear in the signed-in staff queue just like reports started from that workspace. A repeatable actual voice check is `.\.venv\Scripts\python.exe tools/live_voice_check.py --public`.
 
 Open the case again. Change its status to **In progress**, add “Forwarded to sanitation for route review,” and save. Start a second call: “Please check my request. My phone number is 202-555-0176.” The agent should report **In progress**. Ask: “Please add a note that the bin is still at the curb.” End the call and verify a new **Voice** note and a new event in **Change history**.
 

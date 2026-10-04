@@ -34,10 +34,15 @@ def synthesize(text,name):
 
 async def main():
     policy_check='--policy-check' in sys.argv
+    public_check='--public' in sys.argv
     lookup=next((arg for arg in sys.argv[1:] if not arg.startswith('--')),None)
     async with httpx.AsyncClient(base_url='http://127.0.0.1:8060',timeout=30) as client:
         login=await client.post('/auth/login',json={'password':os.environ['STAFF_PASSWORD']});login.raise_for_status()
-        session_response=await client.post('/voice/session')
+        if public_check:
+            async with httpx.AsyncClient(base_url='http://127.0.0.1:8060',timeout=30) as visitor:
+                session_response=await visitor.post('/public/voice/session')
+        else:
+            session_response=await client.post('/voice/session')
         session_response.raise_for_status()
         info=session_response.json();call_id=info['call_id']
         print('Live voice call',call_id,flush=True)
@@ -168,6 +173,17 @@ async def main():
                     assert len(case['notes'])==before+1 and case['notes'][-1]['actor']=='voice' and 'curb' in case['notes'][-1]['text'].lower(),case
                 print('PASS: live spoken audio → recognized transcript → real model/tool → persisted case; agent audio received.',flush=True)
                 print('CASE',case['id'],flush=True)
+            if public_check:
+                async with httpx.AsyncClient(base_url='http://127.0.0.1:8060',timeout=30) as visitor:
+                    headers={'Authorization':'Bearer '+info['access_token']}
+                    result=await visitor.get('/public/calls/'+call_id,headers=headers)
+                    result.raise_for_status();own=result.json()
+                    assert own['transcript'] and own['receipt']['id']==call['case_id']
+                    assert all('case_snapshot' not in turn for turn in own['transcript'])
+                    assert (await visitor.get('/cases',headers=headers)).status_code==401
+                    assert (await visitor.get('/calls',headers=headers)).status_code==401
+                    assert (await visitor.post('/public/calls/'+call_id+'/finish',headers=headers)).status_code==200
+                print('PASS: anonymous public entry created a real voice call; own transcript/receipt readable; staff APIs blocked.',flush=True)
         finally:
             event_task.cancel();await asyncio.gather(event_task,return_exceptions=True)
             for task in read_tasks:task.cancel()

@@ -1,7 +1,7 @@
 import pytest
 from livekit.agents.llm import ChatContext,ChatMessage
 from backend.agent import ServiceAgent
-from backend.policy import emergency_turn,EMERGENCY_RESPONSE,EMERGENCY_FOLLOWUP,capability_reply,ROLE_RESPONSE,NOTE_VISIBILITY_RESPONSE
+from backend.policy import emergency_turn,EMERGENCY_RESPONSE,EMERGENCY_FOLLOWUP,capability_reply,ROLE_RESPONSE,PUBLIC_ROLE_RESPONSE,NOTE_VISIBILITY_RESPONSE
 
 @pytest.mark.parametrize('text',[
     'my car flipped over.', 'My truck has just rolled over.',
@@ -34,6 +34,7 @@ def test_urgent_state_does_not_reopen_intake_until_safety_confirmed():
 
 def test_known_app_policy_questions_use_exact_capability_facts():
     assert capability_reply('Am I signed in as staff or as a resident?')==ROLE_RESPONSE
+    assert capability_reply('Am I signed in as staff or as a resident?',public=True)==PUBLIC_ROLE_RESPONSE
     assert capability_reply('Will residents be able to see the notes I add?')==NOTE_VISIBILITY_RESPONSE
     assert capability_reply('Are my notes private?')==NOTE_VISIBILITY_RESPONSE
     assert capability_reply('Please add a note that the bin is still at the curb.') is None

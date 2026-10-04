@@ -19,16 +19,21 @@ ROLE_RESPONSE = (
     'The dashboard is signed in as staff. This voice call simulates resident intake, '
     'so the voice tools do not have staff editing permissions.'
 )
+PUBLIC_ROLE_RESPONSE = (
+    'You are using the public resident demo. No staff sign-in is needed to report '
+    'an issue here. Staff editing permissions are only available in the separate staff workspace.'
+)
 NOTE_VISIBILITY_RESPONSE = (
     'Staff can see case notes in this dashboard, and voice lookup can return them. '
-    'This demo has no separate resident portal, and I cannot promise that a note is private.'
+    'The public reporting page shows only its own call and a case confirmation. '
+    'I cannot promise that a note is private.'
 )
 
-def capability_reply(text: str) -> str | None:
+def capability_reply(text: str,public: bool=False) -> str | None:
     """Use precise app facts for these two frequently confused policy questions."""
     text=text.lower()
     if ('staff' in text and 'resident' in text and any(word in text for word in ['role','signed','login','logged'])):
-        return ROLE_RESPONSE
+        return PUBLIC_ROLE_RESPONSE if public else ROLE_RESPONSE
     visibility_question=re.search(r'\b(?:see|read|view|access)\b.{0,45}\bnotes?\b|\bnotes?\b.{0,45}\b(?:private|privacy|hidden|visible|visibility|staff.only|internal)\b',text)
     if visibility_question:
         return NOTE_VISIBILITY_RESPONSE
@@ -54,11 +59,12 @@ def emergency_turn(text: str,active: bool=False) -> tuple[bool,str | None]:
     return False,None
 
 CAPABILITY_POLICY = '''
-This is an internal staff demo: the web dashboard requires staff sign-in, while its
-voice call simulates the resident workflow. If asked which role the user has,
-explain BOTH: signed into the staff dashboard, speaking through the resident intake
-workflow. Do not infer their personal identity or grant staff voice permissions.
-There is no separate resident portal. Staff see case notes in this dashboard and
+The staff dashboard requires staff sign-in. A separate public reporting page lets
+visitors use voice intake without staff sign-in. Use the call entry-point fact to
+explain the caller's current workflow. Do not infer their personal identity or
+grant staff voice permissions, even if they launched the call from the staff dashboard.
+The public reporting page shows only its own call and a case confirmation.
+Staff see case notes in the dashboard and
 voice lookup can return case notes. Never promise notes are private, staff-only,
 or hidden from residents. Do not invent general municipal visibility policies.
 Lookup supports case ID or phone, not name-only search. If only a name is supplied,
