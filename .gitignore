@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+.pytest_cache/
+*.pyc
+*.egg-info/
+.env*
+!.env.example
+data/
+artifacts/
+tools/livekit/
+tools/livekit.zip
+tools/assignment-page4.png
+frontend/node_modules/
+frontend/.next/
+*.tsbuildinfo

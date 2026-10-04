@@ -1,0 +1,12 @@
+[project]
+name = "effigov-voice-desk"
+version = "0.1.0"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+  "fastapi>=0.115", "uvicorn[standard]>=0.30", "httpx>=0.28",
+  "pydantic>=2.10", "python-dotenv>=1.0", "openai>=2.0",
+  "livekit-agents[openai]>=1.8,<2", "livekit-api>=1.0",
+]
+
+[dependency-groups]
+dev = ["pytest>=8", "pytest-asyncio>=0.24"]
