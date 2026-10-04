@@ -58,6 +58,8 @@ def test_worker_can_collect_and_create_in_its_call(staff):
     call_id=staff.post('/calls/test').json()['id']
     staff.cookies.clear();staff.headers.update({'Authorization':'Bearer '+'w'*32,'X-Call-ID':call_id})
     assert staff.patch('/calls/'+call_id+'/intake',json={'name':'Jordan','stage':'collecting'}).status_code==200
+    assert staff.patch('/calls/'+call_id+'/intake',json={'phone':'1','stage':'collecting'}).status_code==422
+    assert 'phone' not in staff.get('/calls/'+call_id).json()['intake']
     response=staff.post('/cases',json=dict(call_id=call_id,name='Jordan',phone='4155550134',issue_type='pothole',description='A large pothole.',location='Cedar'))
     assert response.status_code==201
     assert staff.get('/cases/'+response.json()['id']).status_code==200

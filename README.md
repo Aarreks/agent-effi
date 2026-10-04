@@ -32,7 +32,7 @@ Calls are visible before a case exists. Recognized speech appears as a temporary
 
 ## Code and checks
 
-`backend/main.py` owns HTTP/WebSocket routes and analysis scheduling. `store.py` owns transactions, retry handling and audit records. `agent.py` owns the LiveKit session, four API tools, and the background review loop. `supervision.py` checks reply claims and constructs corrections from backend facts. `analysis.py` owns structured post-call extraction. The frontend uses one-origin HTTP rewrites and a direct localhost WebSocket.
+`backend/main.py` owns HTTP/WebSocket routes and analysis scheduling. `store.py` owns transactions, retry handling and audit records. `agent.py` owns the LiveKit session, four API tools, and the background review loop. `locations.py` extracts explicit address correction notes without changing saved fields. `supervision.py` checks reply claims and constructs corrections from backend facts. `analysis.py` owns structured post-call extraction, including attribution of notes to their actual call. `greeting.py` prepares the constant greeting before Cloud calls; the Windows launcher runs it automatically. The frontend uses one-origin HTTP rewrites and a direct localhost WebSocket.
 
 ```powershell
 .\check.ps1
@@ -50,11 +50,12 @@ Run `uv sync --frozen`, copy `.env.example` to `.env`, enter the three Cloud cre
 
 ```sh
 uv run uvicorn backend.main:app --host 127.0.0.1 --port 8060
+uv run python -m backend.greeting
 uv run python -m backend.agent dev
 cd frontend && npm ci && npm run dev -- --hostname 127.0.0.1 --port 3060
 ```
 
-Each line above belongs in a separate terminal. Cloud mode needs no local LiveKit server. Python and frontend dependencies are pinned by the included lockfiles.
+Run the greeting preparation once in the worker terminal, then start the worker in that same terminal. The API and frontend each need their own terminal. Greeting preparation is optional and falls back to live speech synthesis if unavailable. Cloud mode needs no local LiveKit server. Python and frontend dependencies are pinned by the included lockfiles.
 
 ## Sources
 

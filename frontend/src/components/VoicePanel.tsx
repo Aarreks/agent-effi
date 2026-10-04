@@ -8,6 +8,7 @@ const api=createJsonClient();
 export function VoicePanel({configured,onCall,publicMode=false}:{configured:boolean;onCall:(id:string,token?:string)=>void;publicMode?:boolean}) {
   const [phase,setPhase]=useState('idle'); const [error,setError]=useState('');
   const [muted,setMuted]=useState(false); const [text,setText]=useState('');
+  const [agentState,setAgentState]=useState('initializing');
   const room=useRef<Room|null>(null); const call=useRef<string|null>(null);
   const accessToken=useRef<string|undefined>(undefined);
   const audioRoot=useRef<HTMLDivElement>(null);
@@ -31,7 +32,7 @@ export function VoicePanel({configured,onCall,publicMode=false}:{configured:bool
 
   async function start() {
     const operation=++generation.current;
-    setError('');setPhase('connecting');setMuted(false);
+    setError('');setPhase('connecting');setMuted(false);setAgentState('initializing');
     try {
       // Obtain microphone permission before creating a persisted call.
       const permission=await navigator.mediaDevices.getUserMedia({audio:true});
@@ -45,6 +46,7 @@ export function VoicePanel({configured,onCall,publicMode=false}:{configured:bool
       if(operation!==generation.current)return;
       const connection=new Room();room.current=connection;
       const isCurrent=()=>operation===generation.current&&room.current===connection;
+      connection.on(RoomEvent.ParticipantAttributesChanged,(attributes)=>{if(isCurrent()&&attributes['lk.agent.state'])setAgentState(attributes['lk.agent.state'])});
       connection.on(RoomEvent.TrackSubscribed,track=>{if(isCurrent()&&track.kind===Track.Kind.Audio){const element=track.attach();audioRoot.current?.appendChild(element);void element.play().catch(()=>{if(isCurrent())setError('Audio playback was blocked. Click Enable sound.')})}});
       connection.on(RoomEvent.TrackUnsubscribed,track=>track.detach().forEach(el=>el.remove()));
       connection.on(RoomEvent.ParticipantConnected,()=>{if(isCurrent()){setPhase('active');if(timeout.current)clearTimeout(timeout.current)}});
@@ -55,7 +57,7 @@ export function VoicePanel({configured,onCall,publicMode=false}:{configured:bool
       if(operation!==generation.current){await connection.disconnect();return}
       await connection.localParticipant.setMicrophoneEnabled(true);
       if(operation!==generation.current){await connection.disconnect();return}
-      if(connection.remoteParticipants.size){setPhase('active')}else{setPhase('waiting');timeout.current=setTimeout(()=>{setError('The voice worker did not join. Check that it is running and the model credentials are valid.');void end()},20000)}
+      if(connection.remoteParticipants.size){setPhase('active');for(const participant of connection.remoteParticipants.values()){if(participant.attributes['lk.agent.state'])setAgentState(participant.attributes['lk.agent.state'])}}else{setPhase('waiting');timeout.current=setTimeout(()=>{setError('The voice worker did not join. Check that it is running and the model credentials are valid.');void end()},20000)}
     } catch(e) {if(operation===generation.current){setError(errorMessage(e));await end()}}
   }
 
@@ -65,7 +67,7 @@ export function VoicePanel({configured,onCall,publicMode=false}:{configured:bool
   return <section className="voice panel">
     <div className="eyebrow">RESIDENT LINE</div><h2>Talk to Effi</h2><p className="muted">Report a service issue or check an existing request.</p>
     <div className={`voice-orb ${connected?'on':''}`} aria-hidden="true"><Mic size={34}/></div>
-    <div className="voice-state" role="status">{phase==='idle'?'Ready when you are':phase==='connecting'?'Connecting…':phase==='waiting'?'Waiting for the agent…':'Voice session connected'}</div>
+    <div className="voice-state" role="status">{phase==='idle'?'Ready when you are':phase==='connecting'?'Connecting…':phase==='waiting'?'Waiting for Effi…':agentState==='initializing'?'Preparing Effi’s voice…':agentState==='speaking'?'Effi is speaking':agentState==='thinking'?'Effi is thinking…':'Effi is listening'}</div>
     {!configured&&<p className="setup">{publicMode?'Voice reporting is currently unavailable. Please try again later.':<>Connect LiveKit Cloud or add an OpenAI API key to <code>submission/.env</code>, then restart.</>}</p>}
     {phase==='idle'?<button className="primary wide" disabled={!configured} onClick={start}><Phone size={17}/> Start voice call</button>:<div className="call-controls"><button disabled={!connected} onClick={toggleMic}>{muted?<MicOff size={18}/>:<Mic size={18}/>} {muted?'Unmute':'Mute'}</button><button className="danger" onClick={()=>void end()}><PhoneOff size={18}/> End call</button></div>}
     {connected&&<><form onSubmit={send} className="text-turn"><label className="sr-only" htmlFor="message">Message the voice agent</label><input id="message" value={text} onChange={e=>setText(e.target.value)} placeholder="Or type to the same agent"/><button aria-label="Send message" disabled={!text.trim()}><Send size={17}/></button></form><button className="link" onClick={()=>void room.current?.startAudio()}>Enable sound</button></>}

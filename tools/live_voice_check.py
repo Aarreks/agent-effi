@@ -9,6 +9,7 @@ import json
 import subprocess
 import sys
 import os
+import time
 from pathlib import Path
 import av
 import httpx
@@ -33,11 +34,12 @@ def synthesize(text,name):
 
 
 async def main():
-    policy_check='--policy-check' in sys.argv
+    policy_check=any(flag in sys.argv for flag in ['--policy-check','--smoke-check','--input-check','--location-check'])
     public_check='--public' in sys.argv
     lookup=next((arg for arg in sys.argv[1:] if not arg.startswith('--')),None)
     async with httpx.AsyncClient(base_url='http://127.0.0.1:8060',timeout=30) as client:
         login=await client.post('/auth/login',json={'password':os.environ['STAFF_PASSWORD']});login.raise_for_status()
+        requested_at=time.perf_counter()
         if public_check:
             async with httpx.AsyncClient(base_url='http://127.0.0.1:8060',timeout=30) as visitor:
                 session_response=await visitor.post('/public/voice/session')
@@ -47,6 +49,7 @@ async def main():
         info=session_response.json();call_id=info['call_id']
         print('Live voice call',call_id,flush=True)
         room=rtc.Room();source=rtc.AudioSource(24000,1);audio_frames=0
+        first_audio_at=None
         read_tasks=[]
         caption_events=0
 
@@ -64,10 +67,12 @@ async def main():
         def track(track,publication,participant):
             if track.kind!=rtc.TrackKind.KIND_AUDIO:return
             async def read():
-                nonlocal audio_frames
+                nonlocal audio_frames,first_audio_at
                 stream=rtc.AudioStream(track)
                 try:
-                    async for event in stream:audio_frames+=1
+                    async for event in stream:
+                        audio_frames+=1
+                        if first_audio_at is None and any(event.frame.data):first_audio_at=time.perf_counter()
                 finally:await stream.aclose()
             read_tasks.append(asyncio.create_task(read()))
 
@@ -109,6 +114,7 @@ async def main():
             track=rtc.LocalAudioTrack.create_audio_track('resident-voice-check',source)
             await room.local_participant.publish_track(track,rtc.TrackPublishOptions(source=rtc.TrackSource.SOURCE_MICROPHONE))
             await reply()
+            if first_audio_at is not None:print(f'FIRST_AUDIO {first_audio_at-requested_at:.2f}s from session request',flush=True)
             if policy_check:
                 checks=[
                     ('Am I signed in as staff or as a resident?', 'role'),
@@ -118,21 +124,49 @@ async def main():
                     ('Can you help me dial nine one one?', 'dial'),
                     ('I am safe; that was just a test. Can you explain the staff and resident roles again?', 'role'),
                 ]
+                if '--smoke-check' in sys.argv:
+                    checks=[('I smell terrible smoke what is that about?', 'emergency'),
+                            ('Wait, that address is wrong. Please add a correction note.', 'paused'),
+                            ('I thought you left a note about that or something.', 'paused'),
+                            ('I am safe; that was just a test. Can you explain the staff and resident roles again?', 'role')]
+                if '--input-check' in sys.argv:
+                    checks=[('New.', 'new'),('iuhgiuqwn ciqwnguio oqrg','nonsense'),
+                            ('My name is Morgan Reed.', 'phone'),('1','incomplete')]
+                if '--location-check' in sys.argv:
+                    checks=[('Please look up case EG-119B5C and tell me the reported location.','location'),
+                            ('How long ago was it created?','age'),
+                            ('I thought you left a note about correcting the address.','existing-note')]
                 for text,label in checks:
-                    await speak(text,'policy-'+label)
+                    if '--input-check' in sys.argv or '--location-check' in sys.argv:
+                        print('Resident text:',text,flush=True)
+                        await room.local_participant.send_text(text,topic='lk.chat')
+                    else:await speak(text,'policy-'+label)
                     call=await reply()
                     spoken=[t for t in call['transcript'] if t['role']=='assistant'][-1]['text'].lower()
                     if label=='role':assert 'staff' in spoken and 'resident' in spoken,spoken
                     elif label=='privacy':assert 'staff' in spoken and ('voice' in spoken or 'lookup' in spoken),spoken
                     elif label=='name':assert 'phone' in spoken and ('case' in spoken or 'id' in spoken),spoken
+                    elif label=='new':assert 'name' in spoken,spoken
+                    elif label=='nonsense':assert any(word in spoken for word in ['repeat','spell','understand','clarify','clear','catch']),spoken
+                    elif label=='phone':assert 'phone' in spoken,spoken
+                    elif label=='incomplete':assert any(word in spoken for word in ['incomplete','too short','seven digits']) and ('number' in spoken or 'phone' in spoken),spoken
+                    elif label in {'location','existing-note'}:
+                        assert '430' in spoken and any(word in spoken for word in ['note','correction','corrected']),spoken
+                        if label=='location' and '428' in spoken:assert spoken.index('430')<spoken.index('428'),spoken
+                    elif label=='age':assert 'ago' in spoken and ('minute' in spoken or 'hour' in spoken),spoken
                     else:
                         assert '911' in spoken and ('cannot' in spoken or "can't" in spoken),spoken
                         assert '?' not in spoken and 'municipal' not in spoken and 'service request' not in spoken,spoken
-                assert not call.get('case_id'),'Policy-only conversation unexpectedly created/linked a case'
+                if '--location-check' in sys.argv:assert call.get('case_id')=='EG-119B5C'
+                else:assert not call.get('case_id'),'Policy-only conversation unexpectedly created/linked a case'
                 assert audio_frames>0
                 user_text=' '.join(t['text'].lower() for t in call['transcript'] if t['role']=='user')
-                assert 'flipped' in user_text and ('nine one one' in user_text or '911' in user_text)
-                print('PASS: real voice role/privacy/search policies and emergency fast path; urgent input and output persisted; no case action.',flush=True)
+                if '--smoke-check' in sys.argv:assert 'smoke' in user_text and not call.get('intake')
+                elif '--input-check' in sys.argv:
+                    assert call.get('intake',{}).get('name')=='Morgan Reed' and not call.get('intake',{}).get('phone')
+                    assert 'iuhgiuqwn' not in json.dumps(call.get('intake',{}))
+                elif '--location-check' not in sys.argv:assert 'flipped' in user_text and ('nine one one' in user_text or '911' in user_text)
+                print('PASS: real model policy check; input/output persisted; no case action.',flush=True)
             else:
                 if lookup:
                     alphabet={'A':'Alpha','B':'Bravo','C':'Charlie','D':'Delta','E':'Echo','F':'Foxtrot','G':'Golf'}
@@ -178,7 +212,9 @@ async def main():
                     headers={'Authorization':'Bearer '+info['access_token']}
                     result=await visitor.get('/public/calls/'+call_id,headers=headers)
                     result.raise_for_status();own=result.json()
-                    assert own['transcript'] and own['receipt']['id']==call['case_id']
+                    assert own['transcript']
+                    if call['case_id']:assert own['receipt']['id']==call['case_id']
+                    else:assert own['receipt'] is None
                     assert all('case_snapshot' not in turn for turn in own['transcript'])
                     assert (await visitor.get('/cases',headers=headers)).status_code==401
                     assert (await visitor.get('/calls',headers=headers)).status_code==401
@@ -205,7 +241,8 @@ async def main():
             await asyncio.sleep(0.5)
         assert call.get('supervisor_reviews'),'No live supervisor checks completed'
         assert not any(r['status']=='failed' for r in call['supervisor_reviews']),call['supervisor_reviews']
-        assert caption_events>0,'No live caption WebSocket updates received'
+        if '--input-check' not in sys.argv and '--location-check' not in sys.argv:
+            assert caption_events>0,'No live caption WebSocket updates received'
         if not lookup and not policy_check:
             assert call.get('intake_history') and call['intake_stage']=='recorded','Live intake preview was not updated'
         print('SUPERVISOR',len(call['supervisor_reviews']),'real AI reviews persisted',flush=True)

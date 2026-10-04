@@ -11,9 +11,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from livekit import api
 from pydantic import BaseModel, Field, field_validator
 from .store import Store, now, phone_key
-from .analysis import analyze
+from .analysis import analyze, analysis_input
 from .providers import configured, provider
 from . import auth
+from .locations import location_context
 from fastapi.responses import JSONResponse
 
 load_dotenv('.env')
@@ -44,9 +45,7 @@ async def finish_analysis(call_id):
         store.update_call(call_id,analysis_status='analyzing')
         notify('call',call_id)
         try:
-            transcript='\n'.join(f"{t['role']}: {t['text']}" for t in call['transcript'])
-            if call['case_id']:
-                transcript+='\nBackend confirmed case: '+str(store.case(call['case_id']))
+            transcript=analysis_input(call,store.case(call['case_id']) if call['case_id'] else None)
             result=await analyze(transcript)
             store.update_call(call_id,analysis_status='complete',analysis=result,analysis_fingerprint=fingerprint,analysis_error=None)
         except Exception as exc:
@@ -205,6 +204,13 @@ class IntakePatch(BaseModel):
     description: str | None = Field(default=None,min_length=1,max_length=4000)
     location: str | None = Field(default=None,min_length=1,max_length=300)
     stage: Literal['collecting','awaiting_confirmation'] = 'collecting'
+
+    @field_validator('phone')
+    @classmethod
+    def complete_phone(cls,value):
+        if value is not None and len(''.join(c for c in value if c.isdigit()))<7:
+            raise ValueError('Phone number is incomplete; ask the resident for the full number')
+        return value
 
 
 class SupervisorReview(BaseModel):
@@ -376,6 +382,8 @@ async def resident_call(call_id: str):
     if call['case_id']:
         case=store.case(call['case_id'])
         result['receipt']={key:case[key] for key in ['id','status','issue_type','location']}
+        context=location_context(case)
+        if context['reported_correction']:result['receipt']['reported_correction']=context['reported_correction']
     return result
 
 

@@ -36,9 +36,9 @@ This is the running explanation of the current app. Updated as decisions change.
 
 **Live captions are temporary; transcript turns are permanent.** Incoming recognized speech can appear immediately in a clearly marked live caption. That text may change. When the full turn is ready, it replaces the caption and is saved in the transcript. We do not store unstable, half-recognized words as permanent transcript entries.
 
-**A separate AI supervises the agent's replies.** It checks claims about saved requests, case numbers, status, crew dispatch, resolution, and promised dates against backend facts. It runs in the background so the resident can keep talking.
+**A separate AI supervises the agent's replies.** It checks claims about saved requests, case numbers, status, addresses, crew dispatch, resolution, privacy, and promised dates against backend facts. It reads correction notes as well as the case fields. It runs in the background so the resident can keep talking.
 
-**The supervisor's correction is built from saved facts.** The AI identifies the suspect claim. Code constructs the correction using the confirmed case number and status. The reviewer cannot invent a new appointment or dispatch result in its correction.
+**The supervisor's correction is built from saved facts.** The AI identifies the suspect claim. Code constructs the correction using the confirmed case number, status, or recorded address correction. The reviewer cannot invent a new appointment or dispatch result in its correction. The caller can interrupt a correction; an interrupted correction is not marked as fully delivered.
 
 **I keep the facts from when a reply was recorded.** Staff may change a case while a background check is running. The transcript stores the case state alongside the agent's reply, so a later change does not make a previously correct reply look false.
 
@@ -46,7 +46,7 @@ This is the running explanation of the current app. Updated as decisions change.
 
 **A supervisor finding must also make sense in code.** In a microphone rehearsal, the supervisor flagged an interrupted “Your request” fragment and a correct “awaiting staff review” confirmation. The backend now requires an actual saved-action claim before that kind of correction and treats familiar status wording as equivalent to the database values. A model verdict alone is not enough to interrupt a caller.
 
-**The summary does not rewrite the case.** After the call, AI creates a summary and extracts structured information. That analysis is stored separately. It cannot silently change a person's name, staff notes, or case status.
+**The summary does not rewrite the case.** After the call, AI creates a summary and extracts structured information. That analysis is stored separately. It cannot silently change a person's name, staff notes, or case status. The backend tells the summary which notes and changes belong to this call. Reading an old note must not be described as adding a new one.
 
 **A linked case does not prove the caller's identity.** Someone may ask about a case without saying who they are. The analysis should leave caller identity blank unless it was supplied or confirmed in that conversation. Phone lookup is a convenience for this local demo, not proof of identity.
 
@@ -58,9 +58,13 @@ This is the running explanation of the current app. Updated as decisions change.
 
 **I do not promise note privacy that the app does not enforce.** Staff can see case notes, and voice lookup can return them. The public page's data response excludes notes and staff analysis, but voice lookup still has no resident identity check. A fixed answer states these app facts when the caller asks about note visibility; the supervisor can correct an unsupported privacy promise. Ordinary requests to add notes still use the case tool. Use fictional details in the demo.
 
-**A reported correction is different from a changed field.** If the caller reports a new address, voice records a note for staff. Until staff edit the address field, the agent must distinguish the saved address from the correction in the note.
+**Read the correction before saying the address.** Alex Wen's case still had 428 in its original address field, but a note already corrected it to 430. Leading with 428 was misleading. Lookup now gives the latest explicit correction first and explains that staff still need to apply it to the original field. The supervisor checks for the same mistake. The public confirmation also displays the reported correction. Reading the existing correction does not add another note or silently edit the address.
 
-**Model quality is not the only source of mistakes.** In the latest microphone rehearsal, the agent shortened a saved case number and blurred a saved address with a correction note. The supervisor caught the case number, but its current checks do not cover address claims. Speech recognition also misheard words. Separately, a recognized interruption was missing from the saved transcript, and logs showed delays while creating supervisor network clients. Those are integration limitations, not evidence that simply buying a stronger model solves everything. The public confirmation now displays the exact case number and saved location directly from the database.
+**An unfamiliar name is not an invalid name.** Obvious keyboard mashing should prompt a request to repeat or spell the name. A confirmed unfamiliar name is acceptable. A phone number needs at least seven digits; the backend rejects an incomplete number even if the model tries to save it.
+
+**Starting a call still needs a connection.** The short greeting is prepared with the configured voice before calls start, so it needs no fresh conversation-model or speech-synthesis request. The screen now distinguishes connecting, preparing, listening, thinking, and speaking. Measured first audio arrived roughly three to five seconds after the session request, including connection setup. This is a measured range, not a timing guarantee.
+
+**Model quality is not the only source of mistakes.** Microphone rehearsals exposed a shortened case number and an ignored address correction note. The supervisor caught the number; address checks and explicit correction-first lookup wording now cover the address problem too. Speech recognition can still mishear words. Supervisor network-client construction now runs off the audio loop, although other startup network initialization still briefly blocks it. A recognized interruption missing from one saved transcript has not been fully explained. A stronger model alone would not resolve those integration problems.
 
 **A limited lookup is not a count of every case someone has.** Lookup supports case ID or phone, not name-only search. It returns at most five matches. The agent must describe those matches, distinguish open from resolved cases, and avoid claiming a complete total.
 
@@ -74,7 +78,7 @@ This is the running explanation of the current app. Updated as decisions change.
 
 “I tested the backend rules and built the frontend for production. I also sent synthesized resident speech through real LiveKit calls. Those calls used real speech recognition, real AI replies, real tool calls, and real agent audio. I separately injected a false resolved claim to check that the supervisor could detect it and speak a correction.”
 
-The user's physical microphone, browser permissions, and screen-share audio still need a manual rehearsal. A speech recognizer can mishear a street name; that is why the read-back and correction step matter.
+The user's physical microphone and browser voice flow worked in real manual rehearsals. Screen-share audio still needs a manual rehearsal. A speech recognizer can mishear a street name; that is why the read-back and correction step matter.
 
 ## Likely presentation questions
 
@@ -113,3 +117,6 @@ The user's physical microphone, browser permissions, and screen-share audio stil
 - Manual live status rehearsal: staff changed a case from New to Resolved during the call. The next voice lookup read the saved status. When the caller disputed resolution, the agent saved their feedback as a note and kept staff status unchanged. The same call exposed confusing role wording and an unsupported claim about who can see notes; these need clearer language.
 - Whole-call policy review: added urgent-response handling, paused routine tools during emergencies, clarified staff login versus resident workflow and note visibility, stopped name-only search promises, separated canonical addresses from reported corrections, and limited case-count claims to returned matches. Post-call analysis now includes material emergency disclosures even after a goodbye.
 - Public reporting: added `/report` without staff sign-in, reused the real voice flow, scoped visitor access to one call, excluded staff data from public responses, and added a confirmation built directly from the database. The public page shows the exact saved case number even if the agent misreads it.
+- Full correction-note review: made lookup lead with 430 from the existing note, added supervisor address checks, kept the original 428 field pending staff editing, and stopped summaries from claiming an old note was added in a new call.
+- Input and smoke review: added repeat/spell clarification for obvious nonsense, backend validation of incomplete phone numbers, and emergency priority for current smoke/fume/gas reports. A change of topic does not resume intake.
+- Startup and interruption review: prepared the greeting before calls, exposed actual agent progress in the UI, moved supervisor client construction off the audio loop, and made supervisor corrections interruptible.

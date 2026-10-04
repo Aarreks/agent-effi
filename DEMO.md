@@ -28,7 +28,7 @@ For screen sharing, use the Chrome/system-audio option requested by the assignme
 
 Real LiveKit Cloud calls using synthesized resident audio verified speech recognition, generated agent audio, case creation, status lookup, resident-note updates, and structured post-call analysis. These calls used real models and backend tools. API tests verify retries, stale-update conflicts, transcript persistence, and live event notifications.
 
-Your physical microphone, browser permission, selected audio devices, and screen-share audio still need a short manual rehearsal. The automated voice check does not verify those devices.
+The physical microphone and browser flow worked in your manual calls. Rehearse screen-share audio with the device you will use for the interview; the automated voice check does not verify that setup.
 
 ## Start or troubleshoot
 
@@ -54,3 +54,11 @@ Supervisor checks appear in the call view. To demonstrate a correction reliably,
 Worker code changes need a launcher restart; the installed LiveKit SDK's `dev` command does not reload them automatically. End active calls before restarting.
 
 For a fictional emergency rehearsal, say “My car flipped over,” then “Can you help me dial 911?” The app should direct you to call emergency services, clearly say it cannot dial or transfer, and avoid reopening service intake. It does not make a phone call. Say “I am safe; that was a test” to resume ordinary questions. A repeatable real voice check is `.\.venv\Scripts\python.exe tools/live_voice_check.py --policy-check`; it also checks role, note visibility, and name-only lookup responses.
+
+For the address-note check, look up **EG-119B5C**. It should lead with the reported correction to **430 North Claremont Street**, explain that the original **428** field awaits staff editing, and acknowledge the existing note without adding another. Ask “How long ago was it created?” to check report age without a service-time promise. The automated check is `.\.venv\Scripts\python.exe tools/live_voice_check.py --public --location-check EG-119B5C`. This ID belongs to this machine's fictional demo data and is not bundled in the source ZIP.
+
+For unclear input, choose a new report, type random letters when asked for a name, then give a real fictional name. Type “1” for the phone. Expect clarification at both steps, no random name saved, and no incomplete phone in the draft. The automated check is `.\.venv\Scripts\python.exe tools/live_voice_check.py --public --input-check`.
+
+For smoke handling, say “I smell terrible smoke,” then ask to change the address. Routine intake should stay paused. Say “I am safe; that was a test” to resume. The real speech check is `.\.venv\Scripts\python.exe tools/live_voice_check.py --public --smoke-check`.
+
+The launcher prepares the greeting before calls. Connecting and preparing messages explain the remaining startup delay; a connected room does not yet mean the agent is ready to speak.

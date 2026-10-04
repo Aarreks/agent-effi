@@ -34,6 +34,7 @@ try {
     $children+=Start-Process -FilePath $server -ArgumentList @('--dev','--bind','127.0.0.1','--node-ip','127.0.0.1') -WorkingDirectory $projectRoot -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $projectRoot 'data\livekit.log') -RedirectStandardError (Join-Path $projectRoot 'data\livekit-error.log')
   }
   if($health.voice_configured){
+    & $python -m backend.greeting
     $children+=Start-Process -FilePath $python -ArgumentList @('-m','backend.agent','dev') -WorkingDirectory $projectRoot -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $projectRoot 'data\agent.log') -RedirectStandardError (Join-Path $projectRoot 'data\agent-error.log')
   }else{Write-Host 'Voice unavailable: connect LiveKit Cloud or add OPENAI_API_KEY to submission/.env and restart.' -ForegroundColor Yellow}
   Write-Host "EffiGov Voice Desk: http://127.0.0.1:$WebPort · Ctrl+C stops this run."

@@ -74,6 +74,17 @@ def test_unsupported_privacy_promise_gets_specific_correction():
     assert not s.grounded_review(s.ModelVerdict(violation='unsupported_privacy',evidence=truthful),truthful,CASE)['intervene']
 
 
+def test_supervisor_corrects_old_address_without_existing_note_context():
+    case={**CASE,'location':'428 North Claremont Street','notes':[{'text':'Reported updated address: 430 North Claremont Street (corrected from 428 North Claremont Street).'}]}
+    text='It was reported about skipped street cleaning at 428 North Claremont Street, with an update note'
+    result=s.grounded_review(s.ModelVerdict(violation='wrong_location',evidence=text),text,case)
+    assert result['intervene'] and '430 North Claremont Street' in result['correction']
+    assert 'original address field still shows 428' in result['correction']
+    truthful='The notes correct the reported address to 430 North Claremont Street; the original field is still 428 North Claremont Street.'
+    assert not s.grounded_review(s.ModelVerdict(violation='wrong_location',evidence=truthful),truthful,case)['intervene']
+    assert not s.grounded_review(s.ModelVerdict(violation='wrong_location',evidence=text),text,CASE)['intervene']
+
+
 @pytest.mark.asyncio
 async def test_readback_and_intake_get_safe_completed_verdict(monkeypatch):
     monkeypatch.setattr(s, 'configured', lambda: True)

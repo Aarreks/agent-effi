@@ -9,12 +9,13 @@ from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
 
 from .providers import configured, provider
+from .locations import location_context
 
 REVIEW_TIMEOUT_SECONDS = 12
 Violation = Literal[
     'none', 'unsupported_save', 'wrong_case_id', 'wrong_status',
     'unsupported_dispatch', 'unsupported_resolution', 'unsupported_schedule',
-    'unsupported_privacy',
+    'unsupported_privacy', 'wrong_location',
 ]
 
 INSTRUCTIONS = """You independently supervise a municipal voice intake agent. Inspect ONLY
@@ -44,6 +45,17 @@ There is no guaranteed staff-only or private note policy in this demo. Staff see
 in the dashboard and voice lookup can return them. Flag a definite promise that notes
 are private, internal-only, or hidden from residents as unsupported_privacy. A truthful
 explanation that staff can see notes or privacy is not guaranteed is safe.
+Inspect notes as well as the saved location field. A resident address correction
+in notes is material even when staff have not yet edited the original field.
+Flag wrong_location if the reply presents the old address as the current reported
+location and fails to mention the existing correction. In particular, 'reported
+at 428 North Claremont Street' is misleading when a note corrects it to 430.
+Explicitly explaining both the reported correction and the unchanged original
+field is safe. 'Originally reported at X' and questions about an address are safe.
+If an interrupted reply asserts the old location then trails off at 'with an
+update note', the corrected address has not actually been spoken. Do not assume
+that an unspoken continuation would have explained the correction.
+Also flag a claim that the saved address field changed when only a note exists.
 
 Return a structured verdict. evidence must be an exact quote from the latest assistant
 utterance containing the false claim, not from the earlier transcript. For none use an
@@ -70,6 +82,7 @@ REASONS = {
     'unsupported_resolution': 'The backend does not confirm that the issue is resolved.',
     'unsupported_schedule': 'This service has no confirmed service appointment or arrival date.',
     'unsupported_privacy': 'This demo does not guarantee that case notes are private or hidden from residents.',
+    'wrong_location': 'The spoken location omits a recorded address correction or misstates the saved field.',
 }
 STATUSES = {'new': 'awaiting staff review', 'in_progress': 'in progress', 'resolved': 'resolved'}
 
@@ -96,6 +109,14 @@ def grounded_review(verdict: ModelVerdict, assistant_text: str, case: dict | Non
     # the disputed fact. This prevents corrections of interrupted speech or
     # truthful, user-friendly wording of a database status.
     evidence=verdict.evidence.lower()
+    if verdict.violation=='wrong_location':
+        context=location_context(case or {})
+        reported=context['reported_correction'];stored=context['saved_location']
+        if not reported or not stored:return clear
+        if reported.lower() in assistant_text.lower() and not re.search(r'\b(?:saved|changed|updated)\b',evidence):return clear
+        if not any(address.lower() in evidence for address in [reported,stored]):return clear
+        if re.search(r'\b(?:original|originally|previous|previously)\b',evidence) and not re.search(r'\b(?:changed|updated)\b',evidence):return clear
+        return SupervisorReview(intervene=True,reason=REASONS['wrong_location'],correction=f'I need to clarify the location. A resident correction note gives {reported}. The original address field still shows {stored}; staff have not yet applied that correction.').model_dump()
     if verdict.violation=='unsupported_save':
         if not re.search(r'\b(saved|recorded|logged|created|submitted|added|updated|registered)\b',evidence):
             return clear
@@ -135,7 +156,9 @@ def grounded_review(verdict: ModelVerdict, assistant_text: str, case: dict | Non
 async def _model_verdict(payload: str) -> ModelVerdict:
     if provider() == 'livekit':
         from livekit.agents import inference, llm
-        model = inference.LLM(model=os.getenv('LIVEKIT_SUPERVISOR_MODEL', os.getenv('LIVEKIT_ANALYSIS_MODEL', 'openai/gpt-4.1-mini')))
+        # Loading the local certificate store is synchronous on Windows. Keep it
+        # off the audio event loop; the model's actual requests remain async.
+        model = await asyncio.to_thread(inference.LLM,model=os.getenv('LIVEKIT_SUPERVISOR_MODEL', os.getenv('LIVEKIT_ANALYSIS_MODEL', 'openai/gpt-4.1-mini')))
         context = llm.ChatContext()
         context.add_message(role='system', content=INSTRUCTIONS)
         context.add_message(role='user', content=payload)
@@ -171,7 +194,7 @@ async def review_reply(assistant_text: str, transcript: str, case: dict | None) 
     if not configured():
         raise ValueError('Supervisor model credentials are not configured')
     payload = json.dumps(dict(assistant_utterance=assistant_text, latest_transcript=transcript[-24000:],
-                              authoritative_case=case), ensure_ascii=False)
+                              authoritative_case=case,location_context=location_context(case or {})), ensure_ascii=False)
     async with asyncio.timeout(REVIEW_TIMEOUT_SECONDS):
         verdict = await _model_verdict(payload)
     return grounded_review(verdict, assistant_text, case)

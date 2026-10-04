@@ -80,6 +80,27 @@ async def test_emergency_prevents_a_queued_case_correction_from_interrupting(con
 
 
 @pytest.mark.asyncio
+async def test_interrupted_supervisor_speech_is_not_marked_delivered(context,monkeypatch):
+    client,call_id,case=context
+    class InterruptedSpeech:
+        interrupted=True
+        def __await__(self):
+            async def done():pass
+            return done().__await__()
+    class InterruptedSpeaker:
+        def say(self,text,**options):
+            assert options['allow_interruptions'] is True
+            return InterruptedSpeech()
+    item={'id':'reply-interrupted','text':'Your case is resolved.'}
+    await client.post('/calls/'+call_id+'/transcript',json={**item,'role':'assistant'})
+    async def review(*args):return {'intervene':True,'reason':'Wrong status.','correction':'The case is new.'}
+    monkeypatch.setattr(agent,'review_reply',review)
+    await agent.inspect_and_correct(client,InterruptedSpeaker(),call_id,item,set(),lambda:False)
+    finding=(await client.get('/calls/'+call_id)).json()['supervisor_reviews'][0]
+    assert finding['status']=='failed' and 'interrupted' in finding['reason']
+
+
+@pytest.mark.asyncio
 async def test_review_uses_recorded_facts_after_staff_status_change(context,monkeypatch):
     client,call_id,case=context;speaker=Speaker()
     item={'id':'reply-1','text':'Your request is awaiting staff review.'}
