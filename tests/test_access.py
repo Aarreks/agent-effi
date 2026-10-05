@@ -96,3 +96,52 @@ def test_worker_starts_next_report_only_within_its_call(staff):
     assert second['id']!=first['id']
     assert staff.get('/cases/'+second['id']).status_code==200
     assert staff.get('/calls/'+call_id).json()['case_ids']==[first['id'],second['id']]
+
+
+@pytest.mark.parametrize('creations,updates',[(1,3),(2,4),(4,2)])
+def test_worker_interleaves_new_reports_and_existing_case_updates(staff,creations,updates):
+    fields=dict(name='Morgan Example',phone='2025550149',issue_type='pothole',description='Existing pothole',location='24 Cedar Avenue')
+    existing=[]
+    for _ in range(2):
+        seed_call=staff.post('/calls/test').json()['id']
+        existing.append(staff.post('/cases',json={'call_id':seed_call,**fields}).json()['id'])
+    call_id=staff.post('/calls/test').json()['id']
+    staff.cookies.clear();staff.headers.update({'Authorization':'Bearer '+'w'*32,'X-Call-ID':call_id})
+    created=[];linked=[];expected={case_id:[] for case_id in existing}
+    for index in range(max(creations,updates)):
+        if index<creations:
+            reset=staff.post('/calls/'+call_id+'/new-intake',json={'action_id':f'reset-{index}'})
+            assert reset.status_code==200
+            body={'call_id':call_id,'intake_id':reset.json()['intake_id'],**fields,'description':f'New report {index}'}
+            response=staff.post('/cases',json=body)
+            assert response.status_code==201
+            case=response.json();created.append(case['id']);linked.append(case['id'])
+            assert staff.post('/cases',json=body).json()==case
+        if index<updates:
+            target=existing[index%2]
+            found=staff.get('/cases/lookup',params={'call_id':call_id,'case_id':target})
+            assert found.status_code==200 and found.json()[0]['id']==target
+            if target not in linked:linked.append(target)
+            note=f'Confirmed follow-up {index}'
+            body={'call_id':call_id,'action_id':f'note-{index}','note':note}
+            response=staff.patch('/cases/'+target,json=body)
+            assert response.status_code==200
+            assert staff.patch('/cases/'+target,json=body).json()==response.json()
+            assert staff.patch('/cases/'+target,json={**body,'note':'Changed retry'}).status_code==409
+            expected[target].append(note)
+    assert staff.get('/calls/'+call_id).json()['case_ids']==linked
+    assert len(set(created))==creations
+    # Revisit earlier cases under worker permissions; switching must preserve all writes.
+    for case_id in created+existing:
+        assert staff.get('/cases/lookup',params={'call_id':call_id,'case_id':case_id}).status_code==200
+        saved=staff.get('/cases/'+case_id).json()
+        if case_id in expected:
+            assert [note['text'] for note in saved['notes']]==expected[case_id]
+            assert all(note['call_id']==call_id for note in saved['notes'])
+            assert saved['revision']==1+len(expected[case_id])
+        else:
+            assert saved['description']==f'New report {created.index(case_id)}'
+            assert saved['revision']==1 and saved['notes']==[]
+    staff.headers.clear()
+    assert staff.post('/auth/login',json={'password':'test-staff-password'}).status_code==200
+    assert len(staff.get('/cases').json())==2+creations
