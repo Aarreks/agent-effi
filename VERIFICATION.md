@@ -25,6 +25,8 @@ Verified on Windows with Python 3.12, Node 24.19, and the dependencies in `uv.lo
 
 ## Assignment coverage
 
+- Transcript layout regression: inspected the staff browser with 44 stored calls. The selected call was 3,349 pixels down the page despite its saved turns being present. After the layout fix, the conversation appears before the queue, history stays within a 380-pixel scroll area, and the current call's displayed transcript grew from 12 to 14 turns without a reload. Browser error log was empty and frontend type checking passed.
+
 | Requirement | Implementation and evidence |
 | --- | --- |
 | Voice creates, looks up, and updates requests | Real Cloud voice calls created cases, retrieved current status, and appended resident notes. |

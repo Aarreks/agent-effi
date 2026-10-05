@@ -100,6 +100,7 @@ The user's physical microphone and browser voice flow worked in real manual rehe
 
 ## Running change log
 
+- Transcript visibility: the transcript was saved, but 44 call rows pushed the selected conversation over 3,300 pixels down the staff page. The selected call now appears before the queue, the history list scrolls inside a limited area, and transcript turns appear before supervisor details. The Calls tab opens the newest call when none is selected.
 - Initial build: chose a narrow voice-to-case flow with SQLite and a staff dashboard.
 - Credential setup: switched the default on this machine to LiveKit Cloud model access, so separate model-provider keys are unnecessary.
 - Retry review: rejected changed creation retries and prevented looking up another case from returning the wrong creation result.
