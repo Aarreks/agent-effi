@@ -115,11 +115,18 @@ class Store:
             db.execute('INSERT INTO turns VALUES(?,?,?)',(identity,event_id,json.dumps(value)))
             return value
 
-    def update_intake(self, identity, fields, stage='collecting'):
+    def update_intake(self, identity, fields, stage='collecting',start_new=False):
         with self.db() as db:
             call=self.get(db,'calls',identity)
-            if call['case_id']:raise ValueError('The case is already linked. Add a case note instead.')
             if call['status'] in {'ended','failed'}:raise ValueError('This call has ended')
+            if start_new:
+                if call.get('created_request'):
+                    raise ValueError('A request was already created in this call. Start a new call for a separate request.')
+                if call['case_id'] or call.get('intake'):
+                    call.setdefault('workflow_history',[]).append(dict(at=now(),previous_case_id=call['case_id'],previous_intake=call.get('intake',{}),event='new_intake'))
+                call.update(case_id=None,intake={},intake_stage='collecting')
+                self.save(db,'calls',call)
+            if call['case_id']:raise ValueError('The case is already linked. Start fresh intake explicitly for a separate request, or add a note to the existing case.')
             intake={**call.get('intake',{}),**fields}
             if intake != call.get('intake',{}) or stage != call.get('intake_stage','collecting'):
                 call.update(intake=intake,intake_stage=stage)

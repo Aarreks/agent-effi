@@ -4,6 +4,27 @@ from backend.agent import ServiceAgent
 from backend.policy import emergency_turn,EMERGENCY_RESPONSE,EMERGENCY_FOLLOWUP,capability_reply,ROLE_RESPONSE,PUBLIC_ROLE_RESPONSE,NOTE_VISIBILITY_RESPONSE,case_age_reply,emergency_guidance,phone_clarification
 from datetime import datetime,timezone
 
+
+@pytest.mark.asyncio
+async def test_exact_new_case_switch_clears_old_identity_before_speaking():
+    import httpx
+    requests=[]
+    class Backend:
+        async def request(self,method,path,**kwargs):
+            requests.append((method,path,kwargs))
+            payload={'case_id':'EG-119B5C'} if method=='GET' else {'case_id':None,'intake':{}}
+            return httpx.Response(200,json=payload,request=httpx.Request(method,'http://test'+path))
+    assistant=ServiceAgent('switch-call',Backend())
+    ctx=ChatContext()
+    message=ChatMessage(role='user',content=['new case actually'])
+    ctx.items.append(message)
+    await assistant.on_user_turn_completed(ctx,message)
+    assert requests[1][2]['json']=={'start_new':True}
+    assert assistant.latest_case is None
+    spoken=''.join([part async for part in assistant.llm_node(ctx,[],None)])
+    assert "switched to a new report" in spoken
+    assert any('no case linked' in item.text_content for item in ctx.items if isinstance(item,ChatMessage) and item.role=='system')
+
 @pytest.mark.parametrize('text',[
     'my car flipped over.', 'My truck has just rolled over.',
     'My car is upside down.', "I can't breathe.", 'The building is on fire.',

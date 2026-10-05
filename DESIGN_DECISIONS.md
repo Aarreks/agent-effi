@@ -100,6 +100,7 @@ The user's physical microphone and browser voice flow worked in real manual rehe
 
 ## Running change log
 
+- Workflow switch: a caller can explicitly switch from lookup to fresh intake. This clears the old case link and draft, acknowledges the switch, and collects the new name and phone. It leaves the previous case unchanged and removes the worker's access to it. A call that already created a request still requires a new call for a second creation.
 - Transcript visibility: the transcript was saved, but 44 call rows pushed the selected conversation over 3,300 pixels down the staff page. The selected call now appears before the queue, the history list scrolls inside a limited area, and transcript turns appear before supervisor details. The Calls tab opens the newest call when none is selected.
 - Initial build: chose a narrow voice-to-case flow with SQLite and a staff dashboard.
 - Credential setup: switched the default on this machine to LiveKit Cloud model access, so separate model-provider keys are unnecessary.

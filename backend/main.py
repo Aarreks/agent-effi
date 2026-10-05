@@ -205,6 +205,7 @@ class CallFailure(BaseModel):
 
 
 class IntakePatch(BaseModel):
+    start_new: bool = False
     name: str | None = Field(default=None,min_length=1,max_length=100)
     phone: str | None = Field(default=None,min_length=1,max_length=30)
     issue_type: Literal['missed_collection','pothole','streetlight','other'] | None = None
@@ -323,9 +324,9 @@ async def live_caption(call_id: str,body: Caption):
 
 @app.patch('/calls/{call_id}/intake')
 async def intake(call_id: str,body: IntakePatch):
-    fields=body.model_dump(exclude_none=True,exclude={'stage'})
-    if not fields:raise HTTPException(422,'Supply at least one collected detail')
-    result=store.update_intake(call_id,fields,body.stage)
+    fields=body.model_dump(exclude_none=True,exclude={'stage','start_new'})
+    if not fields and not body.start_new:raise HTTPException(422,'Supply at least one collected detail')
+    result=store.update_intake(call_id,fields,body.stage,start_new=body.start_new)
     notify('call',call_id)
     return result
 

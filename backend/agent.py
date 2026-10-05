@@ -26,6 +26,7 @@ Greet the resident and explain you can record a service request or look up an ex
 Speak naturally in short sentences. Ask one question at a time. Do not read markdown or JSON.
 For a new request, collect name, phone number, issue type, short description and location.
 Use update_intake whenever you learn or correct resident details, before your next spoken question.
+If the caller switches from an existing case to a separate new report, call update_intake with start_new=true FIRST. This clears the linked case and old draft, without changing the existing case. Explicitly acknowledge the switch and collect the new caller's name and phone. Never claim their name or phone matches an existing case unless a lookup actually returned that match. When correcting name or phone within a draft, update_intake with the replacement value and acknowledge it.
 Only select an issue category when the resident's description supports it. These fields are a draft, not a saved case.
 Set the intake stage to awaiting_confirmation when reading back the complete details. Then create only after confirmation.
 Supported issues: missed trash collection, pothole, streetlight, other.
@@ -53,6 +54,7 @@ class ServiceAgent(Agent):
         self.last_user_text=''
         self.expecting_phone=False
         self.completed_note_actions=[]
+        self.intake_switch_reply=None
 
     def take_note_actions(self):
         actions=self.completed_note_actions
@@ -66,12 +68,23 @@ class ServiceAgent(Agent):
             self.emergency_active=True
 
     async def on_user_turn_completed(self,turn_ctx,new_message):
+        self.intake_switch_reply=None
         self.last_user_text=new_message.text_content or ''
         self.latest_case=None
         self.emergency_active,urgent=emergency_turn(new_message.text_content or '',self.emergency_active)
         if urgent:
             return  # Urgent speech should not wait for a case-status HTTP request.
         call=await self.request('GET',f'/calls/{self.call_id}')
+        import re
+        if call.get('case_id') and re.fullmatch(r'(?:a |actually |(?:i want|i need|start|create|report) (?:a )?)?new (?:case|request|report|issue)(?: actually| instead| please)?[.!?]*',self.last_user_text.strip(),re.I):
+            result=await self.request('PATCH',f'/calls/{self.call_id}/intake',json={'start_new':True})
+            if 'error' in result:
+                self.intake_switch_reply='I cannot start a separate request in this call. Please start a new call for the new report. Your existing case has not been changed.'
+                return
+            call=result
+            self.intake_switch_reply="I've switched to a new report. I won't reuse the previous case's name or phone number. What name should I put on this report?"
+        if not call.get('case_id'):
+            turn_ctx.add_message(role='system',content=f"Current workflow: fresh intake, no case linked. Current draft: {json.dumps(call.get('intake',{}))}. Earlier case lookups are historical context only. Collect and save the caller's newly supplied name and phone with update_intake; do not reuse earlier case identity or claim a duplicate match.")
         if call.get('case_id'):
             case=await self.request('GET','/cases/'+call['case_id'])
             import re
@@ -87,7 +100,7 @@ class ServiceAgent(Agent):
         if latest:
             self.last_user_text=latest.text_content or ''
             self.emergency_active,urgent=emergency_turn(self.last_user_text,self.emergency_active)
-            fixed=urgent or phone_clarification(latest.text_content or '',self.expecting_phone) or capability_reply(latest.text_content or '',public=self.public) or case_age_reply(latest.text_content or '',self.latest_case)
+            fixed=urgent or self.intake_switch_reply or phone_clarification(latest.text_content or '',self.expecting_phone) or capability_reply(latest.text_content or '',public=self.public) or case_age_reply(latest.text_content or '',self.latest_case)
             # A fresh lookup with an explicit correction must speak that location
             # first. Do not leave the ordering to a model paraphrase.
             tail=chat_ctx.items[-1] if chat_ctx.items else None
@@ -117,15 +130,19 @@ class ServiceAgent(Agent):
     async def update_intake(self,context: RunContext,name: str='',phone: str='',
                             issue_type: Literal['','missed_collection','pothole','streetlight','other']='',
                             description: str='',location: str='',
-                            stage: Literal['collecting','awaiting_confirmation']='collecting'):
+                            stage: Literal['collecting','awaiting_confirmation']='collecting',start_new: bool=False):
         """Update the live intake preview from the resident's words. Not a case creation.
 
         Send only details learned or corrected in this call. Omit unknown details.
         Set issue_type only when supported by the description. Use awaiting_confirmation
-        for the read-back; do not use this tool after finding or creating a case.
+        for the read-back. Set start_new=true ONLY when the caller explicitly wants a
+        separate new report after a lookup; this clears the old case link and draft.
+        A new report after already creating a case requires a new call.
         """
         fields={k:v for k,v in dict(name=name,phone=phone,issue_type=issue_type,description=description,location=location).items() if v}
-        return await self.request('PATCH',f'/calls/{self.call_id}/intake',json={**fields,'stage':stage or 'collecting'})
+        result=await self.request('PATCH',f'/calls/{self.call_id}/intake',json={**fields,'stage':stage or 'collecting','start_new':start_new})
+        if start_new and 'error' not in result:self.latest_case=None
+        return result
 
     @function_tool
     async def create_case(self,context: RunContext,name: str,phone: str,

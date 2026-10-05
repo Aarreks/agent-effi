@@ -19,6 +19,30 @@ def new_call(client):
     return client.post('/calls/test').json()['id']
 
 
+def test_lookup_switch_to_new_report_collects_new_identity(client):
+    original=report(client).json()
+    call_id=new_call(client)
+    assert client.get('/cases/lookup',params={'call_id':call_id,'case_id':original['id']}).status_code==200
+    response=client.patch('/calls/'+call_id+'/intake',json={'start_new':True})
+    assert response.status_code==200
+    assert response.json()['case_id'] is None and response.json()['intake']=={}
+    details=dict(name='Troy Zhang',phone='8427892014',issue_type='other',description='Broken traffic light',location='67 Carousel Street')
+    draft=client.patch('/calls/'+call_id+'/intake',json=details).json()
+    assert draft['intake']==details
+    saved=client.post('/cases',json={'call_id':call_id,**details})
+    assert saved.status_code==201 and saved.json()['name']=='Troy Zhang' and saved.json()['phone']=='8427892014'
+    assert saved.json()['id']!=original['id']
+    assert client.get('/cases/'+original['id']).json()['name']==original['name']
+    assert client.get('/cases/'+original['id']).json()['notes']==original['notes']
+    assert client.patch('/calls/'+call_id+'/intake',json={'start_new':True}).status_code==409
+
+
+def test_cannot_reset_intake_after_call_ends(client):
+    call_id=new_call(client)
+    client.post('/calls/'+call_id+'/finish')
+    assert client.patch('/calls/'+call_id+'/intake',json={'start_new':True}).status_code==409
+
+
 def report(client,call_id=None,**fields):
     return client.post('/cases',json=dict(call_id=call_id or new_call(client),name='Jordan Lee',phone='(415) 555-0134',
                     issue_type='missed_collection',description='Trash was not collected this morning.',location='24 Cedar Avenue',**fields))

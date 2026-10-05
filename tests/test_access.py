@@ -64,6 +64,19 @@ def test_worker_can_collect_and_create_in_its_call(staff):
     assert response.status_code==201
     assert staff.get('/cases/'+response.json()['id']).status_code==200
 
+
+def test_fresh_intake_removes_worker_access_to_previous_case(staff):
+    old_call=staff.post('/calls/test').json()['id']
+    case=staff.post('/cases',json=dict(call_id=old_call,name='Alex Wen',phone='4153069766',issue_type='other',description='Skipped street cleaning',location='Claremont')).json()
+    call_id=staff.post('/calls/test').json()['id']
+    staff.cookies.clear();staff.headers.update({'Authorization':'Bearer '+'w'*32,'X-Call-ID':call_id})
+    assert staff.get('/cases/lookup',params={'call_id':call_id,'case_id':case['id']}).status_code==200
+    assert staff.patch('/calls/'+call_id+'/intake',json={'start_new':True}).status_code==200
+    assert staff.get('/cases/'+case['id']).status_code==403
+    assert staff.patch('/cases/'+case['id'],json={'call_id':call_id,'action_id':'old','note':'Wrong case'}).status_code==403
+    assert staff.patch('/calls/'+old_call+'/intake',json={'start_new':True}).status_code==403
+    assert staff.patch('/calls/'+call_id+'/intake',json={'name':'Troy Zhang','phone':'8427892014'}).json()['intake']['name']=='Troy Zhang'
+
 def test_login_attempts_are_limited(staff):
     staff.cookies.clear()
     for _ in range(5):assert staff.post('/auth/login',json={'password':'wrong-password'}).status_code==401
