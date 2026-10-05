@@ -1,5 +1,6 @@
 """Present explicit address corrections in notes without silently editing case fields."""
 import re
+from datetime import datetime
 
 
 def address_key(value: str) -> str:
@@ -28,6 +29,11 @@ def location_context(case: dict) -> dict:
     ]
     normalize=address_key
     for note in reversed(case.get('notes',[])):
+        reviewed=case.get('location_reviewed_at')
+        if reviewed:
+            try:
+                if not note.get('at') or datetime.fromisoformat(note['at'])<=datetime.fromisoformat(reviewed):continue
+            except (ValueError,TypeError):continue
         text=note.get('text','').strip()
         for pattern in patterns:
             match=re.search(pattern,text,re.I)

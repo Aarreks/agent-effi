@@ -43,6 +43,23 @@ def test_cannot_reset_intake_after_call_ends(client):
     assert client.patch('/calls/'+call_id+'/intake',json={'start_new':True}).status_code==409
 
 
+@pytest.mark.parametrize('staff_address',['24 Cedar Avenue','26 Cedar Avenue'])
+def test_staff_reviews_address_and_preserves_resident_notes(client,staff_address):
+    from backend.locations import location_context
+    case=report(client).json()
+    case=client.patch('/cases/'+case['id'],json={'note':'Resident-reported address correction: 25 Cedar Avenue (previously 24 Cedar Avenue)'}).json()
+    assert location_context(case)['reported_correction']=='25 Cedar Avenue'
+    saved=client.patch('/cases/'+case['id'],json={'revision':case['revision'],'location':staff_address})
+    assert saved.status_code==200
+    result=saved.json()
+    assert result['location']==staff_address and result['location_reviewed_at']
+    assert result['notes']==case['notes']
+    assert location_context(result)['reported_correction'] is None
+    assert client.patch('/cases/'+case['id'],json={'revision':case['revision'],'location':'Wrong stale address'}).status_code==409
+    result=client.patch('/cases/'+case['id'],json={'note':f'Resident-reported address correction: 27 Cedar Avenue (previously {staff_address})'}).json()
+    assert location_context(result)['reported_correction']=='27 Cedar Avenue'
+
+
 def report(client,call_id=None,**fields):
     return client.post('/cases',json=dict(call_id=call_id or new_call(client),name='Jordan Lee',phone='(415) 555-0134',
                     issue_type='missed_collection',description='Trash was not collected this morning.',location='24 Cedar Avenue',**fields))

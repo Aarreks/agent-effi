@@ -7,3 +7,5 @@
 
 /* Keep the selected conversation visible as call history grows. */
 .queue-area>.call-detail{margin-top:0;margin-bottom:20px;scroll-margin-top:20px}.call-list{max-height:380px;overflow-y:auto}.queue .table-wrap{max-height:420px;overflow-y:auto}
+
+.address-review{display:flex;align-items:center;gap:8px}.triage .address-review input{width:auto}.triage>p{font-size:12px;margin:0}

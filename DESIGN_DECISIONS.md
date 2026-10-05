@@ -125,3 +125,5 @@ The user's physical microphone and browser voice flow worked in real manual rehe
 - Input and smoke review: added repeat/spell clarification for obvious nonsense, backend validation of incomplete phone numbers, and emergency priority for current smoke/fume/gas reports. A change of topic does not resume intake.
 - Startup and interruption review: prepared the greeting before calls, exposed actual agent progress in the UI, moved supervisor client construction off the audio loop, and made supervisor corrections interruptible.
 - Saved-note review: linked spoken confirmations to backend-verified tool action receipts and added a code check that blocks false unsaved-note corrections while retaining checks for unsupported saves, statuses, and dispatch.
+
+- Staff address review: added an official address field to staff triage. Staff can change it or confirm the current address. Either decision closes earlier address proposals while preserving their original notes and auditing the decision. New resident corrections after the decision still appear for review.

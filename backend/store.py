@@ -205,6 +205,10 @@ class Store:
             before=json.loads(json.dumps(case))
             note=fields.get('note')
             case.update({k:v for k,v in fields.items() if k != 'note'})
+            if actor=='staff' and 'location' in fields:
+                # A staff decision supersedes earlier resident address proposals,
+                # including an explicit confirmation of the unchanged address.
+                case['location_reviewed_at']=now()
             if note:
                 case['notes'].append(dict(text=note, at=now(),actor=actor,call_id=call_id))
             if case == before:
