@@ -219,3 +219,16 @@ async def test_livekit_invalid_verdict_is_failure_and_closes_model(monkeypatch):
     with pytest.raises(ValueError):
         await s.review_reply('Saved.', '', None)
     assert closed == [True]
+
+
+def test_supervisor_recognizes_both_saved_case_ids():
+    from backend.supervision import grounded_review,ModelVerdict
+    first={'id':'EG-111111','status':'new','notes':[]}
+    second={'id':'EG-222222','status':'new','notes':[]}
+    context={**second,'related_cases':[first,second]}
+    text='Your saved cases are EG-111111 and EG-222222.'
+    assert not grounded_review(ModelVerdict(violation='wrong_case_id',evidence=text),text,context)['intervene']
+    text='Case EG-111111 is awaiting staff review.'
+    assert not grounded_review(ModelVerdict(violation='wrong_status',evidence=text),text,context)['intervene']
+    wrong='Case EG-111111 is resolved.'
+    assert grounded_review(ModelVerdict(violation='wrong_status',evidence=wrong),wrong,context)['intervene']

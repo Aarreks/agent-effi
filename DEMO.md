@@ -64,3 +64,7 @@ For unclear input, choose a new report, type random letters when asked for a nam
 For smoke handling, say “I smell terrible smoke,” then ask to change the address. Routine intake should stay paused. Say “I am safe; that was a test” to resume. The real speech check is `.\.venv\Scripts\python.exe tools/live_voice_check.py --public --smoke-check`.
 
 The launcher prepares the greeting before calls. Connecting and preparing messages explain the remaining startup delay; a connected room does not yet mean the agent is ready to speak.
+
+## Two reports in one call
+
+Create and confirm the first report. Then say “new case” or ask to start another report. Give the second report’s details and confirm them separately. Both case numbers remain visible in the conversation and both cases appear in the staff queue. Starting another draft does not create or delete a case.

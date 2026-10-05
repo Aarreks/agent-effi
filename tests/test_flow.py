@@ -34,7 +34,8 @@ def test_lookup_switch_to_new_report_collects_new_identity(client):
     assert saved.json()['id']!=original['id']
     assert client.get('/cases/'+original['id']).json()['name']==original['name']
     assert client.get('/cases/'+original['id']).json()['notes']==original['notes']
-    assert client.patch('/calls/'+call_id+'/intake',json={'start_new':True}).status_code==409
+    assert client.patch('/calls/'+call_id+'/intake',json={'start_new':True}).status_code==200
+    assert client.get('/cases/'+saved.json()['id']).status_code==200
 
 
 def test_cannot_reset_intake_after_call_ends(client):
@@ -274,3 +275,66 @@ def test_live_caption_is_temporary_and_not_a_transcript_duplicate(client):
         assert client.get(path).json()['live_caption']['text']=='Another detail'
     client.post(path+'/finish')
     assert client.post(path+'/caption',json={'role':'user','text':'late text'}).status_code==409
+
+
+def test_two_confirmed_reports_same_call_survive_and_retry_independently(client):
+    call_id=new_call(client)
+    first_scope=client.get('/calls/'+call_id).json()['intake_id']
+    fields=dict(name='Morgan Example',phone='2025550149',issue_type='pothole',description='Large pothole',location='24 Cedar Avenue')
+    first_body=dict(call_id=call_id,intake_id=first_scope,**fields)
+    first=client.post('/cases',json=first_body).json()
+    reset=client.post('/calls/'+call_id+'/new-intake',json={'action_id':'reset-2'})
+    assert reset.status_code==200 and reset.json()['case_id'] is None
+    second_scope=reset.json()['intake_id']
+    assert second_scope!=first_scope
+    second_body=dict(call_id=call_id,intake_id=second_scope,**{**fields,'description':'Broken traffic light','issue_type':'other'})
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results=list(pool.map(lambda _:client.post('/cases',json=second_body).json(),range(4)))
+    assert len({case['id'] for case in results})==1
+    second=results[0]
+    assert second['id']!=first['id']
+    assert client.post('/cases',json=first_body).json()==first
+    assert client.post('/cases',json=second_body).json()==second
+    assert client.post('/cases',json={**first_body,'name':'Different contents'}).status_code==409
+    linked=client.get('/calls/'+call_id).json()
+    assert linked['case_id']==second['id'] and linked['case_ids']==[first['id'],second['id']]
+    assert len(client.get('/cases').json())==2
+    assert client.get('/cases/'+first['id']).json()['description']=='Large pothole'
+    assert client.post('/calls/'+call_id+'/new-intake',json={'action_id':'reset-2'}).json()['case_id']==second['id']
+    assert client.get('/calls/'+call_id).json()['intake_id']==second_scope
+
+
+def test_identical_reports_can_be_explicitly_created_in_separate_intakes(client):
+    call_id=new_call(client)
+    first=report(client,call_id).json()
+    assert client.post('/calls/'+call_id+'/new-intake',json={'action_id':'reset-same'}).status_code==200
+    second=report(client,call_id).json()
+    assert second['id']!=first['id']
+    assert len(client.get('/cases').json())==2
+
+
+def test_reset_cannot_also_write_name_and_cannot_reuse_note_action_id(client):
+    call_id=new_call(client)
+    response=client.patch('/calls/'+call_id+'/intake',json={'start_new':True,'name':'new case'})
+    assert response.status_code==409
+    assert client.get('/calls/'+call_id).json()['intake']=={}
+    case=report(client,call_id).json()
+    assert client.patch('/cases/'+case['id'],json={'call_id':call_id,'action_id':'existing-action','note':'Actual saved note'}).status_code==200
+    assert client.post('/calls/'+call_id+'/new-intake',json={'action_id':'existing-action'}).status_code==409
+    assert client.get('/calls/'+call_id).json()['case_id']==case['id']
+
+
+def test_reply_snapshots_keep_both_case_records(client):
+    call_id=new_call(client)
+    first=report(client,call_id).json()
+    client.post('/calls/'+call_id+'/new-intake',json={'action_id':'snapshot-reset'})
+    second=report(client,call_id).json()
+    reply=client.post('/calls/'+call_id+'/transcript',json={'id':'both-cases','role':'assistant','text':'Both requests are saved.'}).json()
+    assert reply['case_snapshot']['id']==second['id']
+    assert [case['id'] for case in reply['case_snapshots']]==[first['id'],second['id']]
+
+
+def test_new_intake_endpoint_rejects_identity_arguments(client):
+    call_id=new_call(client)
+    assert client.post('/calls/'+call_id+'/new-intake',json={'action_id':'bad-reset','name':'new case'}).status_code==422
+    assert client.get('/calls/'+call_id).json()['intake']=={}

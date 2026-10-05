@@ -81,3 +81,18 @@ def test_login_attempts_are_limited(staff):
     staff.cookies.clear()
     for _ in range(5):assert staff.post('/auth/login',json={'password':'wrong-password'}).status_code==401
     assert staff.post('/auth/login',json={'password':'test-staff-password'}).status_code==429
+
+
+def test_worker_starts_next_report_only_within_its_call(staff):
+    call_id=staff.post('/calls/test').json()['id'];other=staff.post('/calls/test').json()['id']
+    fields=dict(call_id=call_id,name='Morgan Example',phone='2025550149',issue_type='pothole',description='First pothole',location='24 Cedar Avenue')
+    first=staff.post('/cases',json=fields).json()
+    staff.cookies.clear();staff.headers.update({'Authorization':'Bearer '+'w'*32,'X-Call-ID':call_id})
+    assert staff.post('/calls/'+other+'/new-intake',json={'action_id':'cross'}).status_code==403
+    reset=staff.post('/calls/'+call_id+'/new-intake',json={'action_id':'own-reset'})
+    assert reset.status_code==200
+    assert staff.get('/cases/'+first['id']).status_code==403
+    second=staff.post('/cases',json={**fields,'intake_id':reset.json()['intake_id'],'description':'Second pothole'}).json()
+    assert second['id']!=first['id']
+    assert staff.get('/cases/'+second['id']).status_code==200
+    assert staff.get('/calls/'+call_id).json()['case_ids']==[first['id'],second['id']]

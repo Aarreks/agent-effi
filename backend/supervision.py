@@ -57,6 +57,9 @@ update note', the corrected address has not actually been spoken. Do not assume
 that an unspoken continuation would have explained the correction.
 Also flag a claim that the saved address field changed when only a note exists.
 confirmed_actions contains backend-verified tool receipts attached to this reply.
+related_cases contains the saved facts for all cases linked during this call, at
+the time this reply was recorded. A call can create multiple cases. Earlier cases
+remain saved when another intake starts. Match a claim to its stated case ID.
 A matching add_note receipt confirms that note was saved, including a separately
 requested repeat. Do not flag it as unsupported_save merely because it is redundant.
 An unrelated receipt does not confirm different note contents, a field change,
@@ -135,6 +138,12 @@ def grounded_review(verdict: ModelVerdict, assistant_text: str, case: dict | Non
         return clear
     if verdict.evidence not in assistant_text:
         return clear
+    related=(case or {}).get('related_cases',[])
+    mentioned=re.findall(r'\bEG-[A-Za-z0-9]{6}\b',verdict.evidence,re.I)
+    known={record.get('id','').upper():record for record in related}
+    if verdict.violation=='wrong_case_id' and mentioned and all(identity.upper() in known for identity in mentioned):return clear
+    if len(set(identity.upper() for identity in mentioned))==1 and mentioned[0].upper() in known:
+        case=known[mentioned[0].upper()]
     if verdict.violation=='unsupported_privacy':
         evidence=verdict.evidence.lower()
         if not re.search(r'\bnotes?\b',evidence):return clear

@@ -45,7 +45,8 @@ async def finish_analysis(call_id):
         store.update_call(call_id,analysis_status='analyzing')
         notify('call',call_id)
         try:
-            transcript=analysis_input(call,store.case(call['case_id']) if call['case_id'] else None)
+            cases=[store.case(identity) for identity in dict.fromkeys(call.get('case_ids',[])+([call['case_id']] if call['case_id'] else []))]
+            transcript=analysis_input(call,store.case(call['case_id']) if call['case_id'] else None,cases=cases)
             result=await analyze(transcript)
             store.update_call(call_id,analysis_status='complete',analysis=result,analysis_fingerprint=fingerprint,analysis_error=None)
         except Exception as exc:
@@ -92,6 +93,7 @@ async def access_control(request,call_next):
             if path==f'/calls/{call_id}':allowed=method=='GET'
             if re.fullmatch(r'/calls/'+re.escape(call_id)+r'/(active|transcript|caption|supervisor|finish|fail)',path):allowed=method=='POST'
             if path==f'/calls/{call_id}/intake':allowed=method=='PATCH'
+            if path==f'/calls/{call_id}/new-intake':allowed=method=='POST'
             if path=='/cases/lookup':allowed=method=='GET' and request.query_params.get('call_id')==call_id
             if path=='/cases' and method=='POST':allowed=(await request.json()).get('call_id')==call_id
             if re.fullmatch(r'/cases/EG-[A-F0-9]{6}',path):
@@ -153,6 +155,7 @@ async def conflict(request,exc):
 
 class CaseCreate(BaseModel):
     call_id: str
+    intake_id: str | None = Field(default=None,min_length=1,max_length=200)
     name: str = Field(min_length=1,max_length=100)
     phone: str = Field(min_length=7,max_length=30)
     issue_type: Literal['missed_collection','pothole','streetlight','other']
@@ -213,12 +216,18 @@ class IntakePatch(BaseModel):
     location: str | None = Field(default=None,min_length=1,max_length=300)
     stage: Literal['collecting','awaiting_confirmation'] = 'collecting'
 
+
     @field_validator('phone')
     @classmethod
     def complete_phone(cls,value):
         if value is not None and len(''.join(c for c in value if c.isdigit()))<7:
             raise ValueError('Phone number is incomplete; ask the resident for the full number')
         return value
+
+
+class IntakeReset(BaseModel):
+    model_config={'extra':'forbid'}
+    action_id: str=Field(min_length=1,max_length=200)
 
 
 class SupervisorReview(BaseModel):
@@ -260,8 +269,8 @@ async def case(case_id: str):
 
 @app.post('/cases',status_code=201)
 async def create(body: CaseCreate):
-    fields=body.model_dump(exclude={'call_id'})
-    result=store.create_case(body.call_id,fields)
+    fields=body.model_dump(exclude={'call_id','intake_id'})
+    result=store.create_case(body.call_id,fields,intake_id=body.intake_id)
     notify('case',result['id'])
     return result
 
@@ -331,6 +340,13 @@ async def intake(call_id: str,body: IntakePatch):
     return result
 
 
+@app.post('/calls/{call_id}/new-intake')
+async def new_intake(call_id: str,body: IntakeReset):
+    result=store.update_intake(call_id,{},start_new=True,reset_id=body.action_id)
+    notify('call',call_id)
+    return result
+
+
 @app.post('/calls/{call_id}/supervisor')
 async def supervisor(call_id: str,body: SupervisorReview):
     result=store.supervisor_review(call_id,body.event_id,body.model_dump(exclude={'event_id'}))
@@ -387,6 +403,13 @@ async def resident_call(call_id: str):
     result['transcript']=[{key:turn[key] for key in ['id','role','text','at']} for turn in call['transcript']]
     result['live_caption']=captions.get(call_id)
     result['receipt']=None
+    result['receipts']=[]
+    for identity in dict.fromkeys(call.get('case_ids',[])+([call['case_id']] if call['case_id'] else [])):
+        saved=store.case(identity)
+        receipt={key:saved[key] for key in ['id','status','issue_type','location']}
+        context=location_context(saved)
+        if context['reported_correction']:receipt['reported_correction']=context['reported_correction']
+        result['receipts'].append(receipt)
     if call['case_id']:
         case=store.case(call['case_id'])
         result['receipt']={key:case[key] for key in ['id','status','issue_type','location']}

@@ -14,7 +14,7 @@ This is the running explanation of the current app. Updated as decisions change.
 
 **I kept a separate backend.** The AI asks the backend to save or retrieve information. It does not directly edit the database. This gives the dashboard and the voice agent the same rules and the same source of truth.
 
-**The model has four specific tools.** It can update the intake preview, create a case, look up a case, and add a note. It has no SQL tool and no general tool for sending any request it wants. The supervisor and summary step save their own findings; they do not edit case fields. The API also requires staff sign-in or the restricted worker credential.
+**The model has five specific tools.** It can start fresh intake, update the intake preview, create a case, look up a case, and add a note. It has no SQL tool and no general tool for sending any request it wants. The supervisor and summary step save their own findings; they do not edit case fields. The API also requires staff sign-in or the restricted worker credential.
 
 **I used SQLite.** The demo needs data to survive a restart, but it does not need a separate database server. SQLite stores the records in a local file and lets related changes succeed or fail together.
 
@@ -28,7 +28,7 @@ This is the running explanation of the current app. Updated as decisions change.
 
 **The backend decides whether an action succeeded.** The agent may announce a saved case only after the backend returns the saved record. If the request fails, it must say the save was not confirmed.
 
-**Repeated delivery should not create repeated work.** A call identifies its case creation, and each note tool action has its own ID. Repeating the same action returns the first result. Reusing the same action ID for different content is rejected. A new call can add a new note, even when its wording matches an earlier report.
+**Repeated delivery should not create repeated work.** Each intake within a call identifies its own case creation, and each note tool action has its own ID. Repeating the same action returns the first result. Reusing the same action ID for different content is rejected. A new call can add a new note, even when its wording matches an earlier report.
 
 **I protect staff edits from stale screens.** Each case has a revision number. If someone saves an older revision after the case changed, the backend asks them to refresh. It does not quietly overwrite the newer data.
 
@@ -92,7 +92,7 @@ The user's physical microphone and browser voice flow worked in real manual rehe
 
 **What happens if the live connection drops?** “The browser reconnects and fetches current records. Periodic checks keep the dashboard useful while that happens.”
 
-**How is access controlled?** “Staff sign in to open the workspace. A public visitor can start a call and gets permission to view only that conversation. The voice worker uses a different credential and can only use the routes for its current call and linked case. The model gets four named tools. It cannot send arbitrary database queries or change staff status.”
+**How is access controlled?** “Staff sign in to open the workspace. A public visitor can start a call and gets permission to view only that conversation. The voice worker uses a different credential and can only use the routes for its current call and linked case. The model gets five named tools. It cannot send arbitrary database queries or change staff status.”
 
 **What would you add for real use?** “Individual staff accounts, resident identity checks, and operational monitoring. The local demo has staff sign-in and restricted worker access, but a phone number alone does not prove who a resident is.”
 
@@ -100,7 +100,7 @@ The user's physical microphone and browser voice flow worked in real manual rehe
 
 ## Running change log
 
-- Workflow switch: a caller can explicitly switch from lookup to fresh intake. This clears the old case link and draft, acknowledges the switch, and collects the new name and phone. It leaves the previous case unchanged and removes the worker's access to it. A call that already created a request still requires a new call for a second creation.
+- Workflow switch: a caller can explicitly switch from lookup to fresh intake. This clears the old case link and draft, acknowledges the switch, and collects the new name and phone. It leaves the previous case unchanged and removes the worker's access to it. A later update allows another separately confirmed report in the same call.
 - Transcript visibility: the transcript was saved, but 44 call rows pushed the selected conversation over 3,300 pixels down the staff page. The selected call now appears before the queue, the history list scrolls inside a limited area, and transcript turns appear before supervisor details. The Calls tab opens the newest call when none is selected.
 - Initial build: chose a narrow voice-to-case flow with SQLite and a staff dashboard.
 - Credential setup: switched the default on this machine to LiveKit Cloud model access, so separate model-provider keys are unnecessary.
@@ -127,3 +127,5 @@ The user's physical microphone and browser voice flow worked in real manual rehe
 - Saved-note review: linked spoken confirmations to backend-verified tool action receipts and added a code check that blocks false unsaved-note corrections while retaining checks for unsupported saves, statuses, and dispatch.
 
 - Staff address review: added an official address field to staff triage. Staff can change it or confirm the current address. Either decision closes earlier address proposals while preserving their original notes and auditing the decision. New resident corrections after the decision still appear for review.
+
+- Multiple reports per call: replaced the model-facing reset flag with a separate `start_new_intake` tool that accepts no resident fields. Every confirmed report has a separate intake ID and saved case. Reset preserves prior cases, their dashboard links, public confirmations, and summary context. Creation retries use both the call and intake ID; an old retry cannot recreate a report or replace the current case link. Reset retries also cannot discard a later draft.

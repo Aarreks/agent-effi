@@ -26,7 +26,8 @@ Greet the resident and explain you can record a service request or look up an ex
 Speak naturally in short sentences. Ask one question at a time. Do not read markdown or JSON.
 For a new request, collect name, phone number, issue type, short description and location.
 Use update_intake whenever you learn or correct resident details, before your next spoken question.
-If the caller switches from an existing case to a separate new report, call update_intake with start_new=true FIRST. This clears the linked case and old draft, without changing the existing case. Explicitly acknowledge the switch and collect the new caller's name and phone. Never claim their name or phone matches an existing case unless a lookup actually returned that match. When correcting name or phone within a draft, update_intake with the replacement value and acknowledge it.
+The same call may create multiple separate reports. After saving or looking up a case, use start_new_intake FIRST when the caller wants another report. It takes no contact or issue fields and preserves all saved cases. Then collect and confirm the new report separately. Never use a workflow choice such as "new case" as a person's name. Never claim their name or phone matches an existing case unless a lookup actually returned that match. When correcting name or phone within a draft, update_intake with the replacement value and acknowledge it.
+Do not speak the next intake question before a tool finishes; execute the tool first, then ask once in the response to its result and wait for the next user answer.
 Only select an issue category when the resident's description supports it. These fields are a draft, not a saved case.
 Set the intake stage to awaiting_confirmation when reading back the complete details. Then create only after confirmation.
 Supported issues: missed trash collection, pothole, streetlight, other.
@@ -76,13 +77,13 @@ class ServiceAgent(Agent):
             return  # Urgent speech should not wait for a case-status HTTP request.
         call=await self.request('GET',f'/calls/{self.call_id}')
         import re
-        if call.get('case_id') and re.fullmatch(r'(?:a |actually |(?:i want|i need|start|create|report) (?:a )?)?new (?:case|request|report|issue)(?: actually| instead| please)?[.!?]*',self.last_user_text.strip(),re.I):
-            result=await self.request('PATCH',f'/calls/{self.call_id}/intake',json={'start_new':True})
+        if re.fullmatch(r'(?:a |another |actually |(?:i want|i need|start|create|report) (?:a |another )?)?new (?:case|request|report|issue)(?: actually| instead| please)?[.!?]*',self.last_user_text.strip(),re.I):
+            result=await self.request('POST',f'/calls/{self.call_id}/new-intake',json={'action_id':'switch-'+new_message.id})
             if 'error' in result:
-                self.intake_switch_reply='I cannot start a separate request in this call. Please start a new call for the new report. Your existing case has not been changed.'
+                self.intake_switch_reply='I could not start a fresh report. Your saved cases have not been changed. Please try again.'
                 return
             call=result
-            self.intake_switch_reply="I've switched to a new report. I won't reuse the previous case's name or phone number. What name should I put on this report?"
+            self.intake_switch_reply="I've switched to a new report. Any cases already saved are still recorded. What name should I put on this report?"
         if not call.get('case_id'):
             turn_ctx.add_message(role='system',content=f"Current workflow: fresh intake, no case linked. Current draft: {json.dumps(call.get('intake',{}))}. Earlier case lookups are historical context only. Collect and save the caller's newly supplied name and phone with update_intake; do not reuse earlier case identity or claim a duplicate match.")
         if call.get('case_id'):
@@ -130,18 +131,26 @@ class ServiceAgent(Agent):
     async def update_intake(self,context: RunContext,name: str='',phone: str='',
                             issue_type: Literal['','missed_collection','pothole','streetlight','other']='',
                             description: str='',location: str='',
-                            stage: Literal['collecting','awaiting_confirmation']='collecting',start_new: bool=False):
+                            stage: Literal['collecting','awaiting_confirmation']='collecting'):
         """Update the live intake preview from the resident's words. Not a case creation.
 
         Send only details learned or corrected in this call. Omit unknown details.
         Set issue_type only when supported by the description. Use awaiting_confirmation
-        for the read-back. Set start_new=true ONLY when the caller explicitly wants a
-        separate new report after a lookup; this clears the old case link and draft.
-        A new report after already creating a case requires a new call.
+        for the read-back. This tool never resets workflow. Use start_new_intake
+        first for a separate report after looking up or creating a case.
         """
         fields={k:v for k,v in dict(name=name,phone=phone,issue_type=issue_type,description=description,location=location).items() if v}
-        result=await self.request('PATCH',f'/calls/{self.call_id}/intake',json={**fields,'stage':stage or 'collecting','start_new':start_new})
-        if start_new and 'error' not in result:self.latest_case=None
+        result=await self.request('PATCH',f'/calls/{self.call_id}/intake',json={**fields,'stage':stage or 'collecting'})
+        return result
+
+    @function_tool
+    async def start_new_intake(self,context: RunContext):
+        """Start a separate report, preserving every saved case. No contact or issue
+        fields are accepted. After success ask for the new report's name and wait.
+        Use only when the resident explicitly wants a new report.
+        """
+        result=await self.request('POST',f'/calls/{self.call_id}/new-intake',json={'action_id':context.function_call.call_id})
+        if 'error' not in result:self.latest_case=None
         return result
 
     @function_tool
@@ -157,7 +166,9 @@ class ServiceAgent(Agent):
             description: A concise description of the reported problem.
             location: The street address or location the resident supplied.
         """
-        return await self.request('POST','/cases',json=dict(call_id=self.call_id,name=name,phone=phone,
+        call=await self.request('GET',f'/calls/{self.call_id}')
+        if 'error' in call:return call
+        return await self.request('POST','/cases',json=dict(call_id=self.call_id,intake_id=call.get('intake_id',self.call_id),name=name,phone=phone,
                                  issue_type=issue_type,description=description,location=location))
 
     @function_tool
@@ -194,6 +205,8 @@ async def inspect_and_correct(client,session,call_id,item,correction_texts,is_cl
         case=turn['case_snapshot']
     elif call['case_id']:
         response=await client.get('/cases/'+call['case_id']);response.raise_for_status();case=response.json()
+    snapshots=(turn or {}).get('case_snapshots',[])
+    if snapshots:case={**(case or {}),'related_cases':snapshots}
     transcript='\n'.join(f"{t['role']}: {t['text']}" for t in call.get('transcript',[]))
     result=await review_reply(item['text'],transcript,case,confirmed_actions=(turn or {}).get('confirmed_actions',[]))
     status='checked'

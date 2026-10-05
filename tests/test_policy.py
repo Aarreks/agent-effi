@@ -19,7 +19,8 @@ async def test_exact_new_case_switch_clears_old_identity_before_speaking():
     message=ChatMessage(role='user',content=['new case actually'])
     ctx.items.append(message)
     await assistant.on_user_turn_completed(ctx,message)
-    assert requests[1][2]['json']=={'start_new':True}
+    assert requests[1][1]=='/calls/switch-call/new-intake'
+    assert requests[1][2]['json']=={'action_id':'switch-'+message.id}
     assert assistant.latest_case is None
     spoken=''.join([part async for part in assistant.llm_node(ctx,[],None)])
     assert "switched to a new report" in spoken

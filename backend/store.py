@@ -29,6 +29,8 @@ class Store:
               CREATE TABLE IF NOT EXISTS changes(id INTEGER PRIMARY KEY, case_id TEXT, payload TEXT NOT NULL);
               CREATE TABLE IF NOT EXISTS actions(call_id TEXT, action_id TEXT, request TEXT, result TEXT,
                 PRIMARY KEY(call_id,action_id));
+              CREATE TABLE IF NOT EXISTS creations(call_id TEXT, intake_id TEXT, request TEXT, result TEXT,
+                PRIMARY KEY(call_id,intake_id));
             ''')
 
     @contextmanager
@@ -74,7 +76,7 @@ class Store:
 
     def start_call(self, mode='voice'):
         call = dict(id=str(uuid.uuid4()), status='connecting' if mode == 'voice' else 'active',
-                    mode=mode, case_id=None, started_at=now(), ended_at=None,
+                    mode=mode, case_id=None, case_ids=[],intake_id=str(uuid.uuid4()),started_at=now(), ended_at=None,
                     analysis_status='pending', analysis=None,intake={},intake_stage='collecting',
                     intake_history=[],supervisor_status='pending',supervisor_reviews=[])
         with self.db() as db:
@@ -94,6 +96,7 @@ class Store:
             value = dict(id=event_id, role=role, text=text, at=now())
             if role=='assistant':
                 value['case_snapshot']=self.get(db,'cases',call['case_id']) if call['case_id'] else None
+                value['case_snapshots']=[self.get(db,'cases',case_id) for case_id in dict.fromkeys(call.get('case_ids',[])+([call['case_id']] if call['case_id'] else []))]
             if action_ids:
                 if role!='assistant':raise ValueError('Only assistant replies may reference saved actions')
                 receipts=[]
@@ -101,8 +104,9 @@ class Store:
                     action=db.execute('SELECT request,result FROM actions WHERE call_id=? AND action_id=?',(identity,action_id)).fetchone()
                     if not action:raise ValueError('Tool action is not confirmed for this call')
                     request=json.loads(action['request']);result=json.loads(action['result'])
-                    note=request['fields'].get('note')
-                    if not note or request['case_id']!=call['case_id'] or result.get('id')!=call['case_id']:
+                    note=request.get('fields',{}).get('note')
+                    linked=set(call.get('case_ids',[])+([call['case_id']] if call['case_id'] else []))
+                    if not note or request.get('case_id') not in linked or result.get('id')!=request.get('case_id'):
                         raise ValueError('Tool action does not confirm a note on the linked case')
                     receipts.append(dict(action_id=action_id,case_id=result['id'],kind='add_note',note=note,saved_at=result['updated_at']))
                 value['confirmed_actions']=receipts
@@ -115,17 +119,25 @@ class Store:
             db.execute('INSERT INTO turns VALUES(?,?,?)',(identity,event_id,json.dumps(value)))
             return value
 
-    def update_intake(self, identity, fields, stage='collecting',start_new=False):
+    def update_intake(self, identity, fields, stage='collecting',start_new=False,reset_id=None):
         with self.db() as db:
             call=self.get(db,'calls',identity)
             if call['status'] in {'ended','failed'}:raise ValueError('This call has ended')
             if start_new:
-                if call.get('created_request'):
-                    raise ValueError('A request was already created in this call. Start a new call for a separate request.')
+                if fields:raise ValueError('Starting a new report cannot also supply contact or issue fields. Collect them after the reset.')
+                if reset_id:
+                    existing=db.execute('SELECT request FROM actions WHERE call_id=? AND action_id=?',(identity,reset_id)).fetchone()
+                    if existing:
+                        if json.loads(existing['request'])!={'kind':'start_intake'}:raise ValueError('Action ID reused with different content')
+                        return call  # A reset retry must not discard a later draft or saved case.
                 if call['case_id'] or call.get('intake'):
                     call.setdefault('workflow_history',[]).append(dict(at=now(),previous_case_id=call['case_id'],previous_intake=call.get('intake',{}),event='new_intake'))
-                call.update(case_id=None,intake={},intake_stage='collecting')
+                if call['case_id']:
+                    call['case_ids']=list(dict.fromkeys(call.get('case_ids',[])+[call['case_id']]))
+                call.pop('created_request',None)
+                call.update(case_id=None,intake={},intake_stage='collecting',intake_id=str(uuid.uuid4()))
                 self.save(db,'calls',call)
+                if reset_id:db.execute('INSERT INTO actions VALUES(?,?,?,?)',(identity,reset_id,json.dumps({'kind':'start_intake'}),json.dumps(call)))
             if call['case_id']:raise ValueError('The case is already linked. Start fresh intake explicitly for a separate request, or add a note to the existing case.')
             intake={**call.get('intake',{}),**fields}
             if intake != call.get('intake',{}) or stage != call.get('intake_stage','collecting'):
@@ -157,21 +169,34 @@ class Store:
         db.execute('INSERT INTO changes(case_id,payload) VALUES(?,?)',
                    (case['id'],json.dumps(dict(at=now(), actor=actor, call_id=call_id, revision=case['revision'],fields=fields))))
 
-    def create_case(self, call_id, fields):
+    def create_case(self, call_id, fields,intake_id=None):
         with self.db() as db:
             call = self.get(db,'calls',call_id)
+            scope=intake_id or call.get('intake_id',call_id)
+            request=json.dumps(fields,sort_keys=True)
+            previous=db.execute('SELECT request,result FROM creations WHERE call_id=? AND intake_id=?',(call_id,scope)).fetchone()
+            if previous:
+                if previous['request']!=request:raise ValueError('Creation retry changed the confirmed report')
+                saved=json.loads(previous['result'])
+                if intake_id is None and call['case_id'] and call['case_id']!=saved['id']:
+                    raise ValueError('This intake is now linked to a different case')
+                return saved
+            if scope!=call.get('intake_id',call_id):raise ValueError('Intake changed. Read and confirm the current report before saving.')
+            if call['status'] in {'ended','failed'}:raise ValueError('This call has ended')
             if call['case_id']:
                 if call.get('created_request') == json.dumps(fields,sort_keys=True):
                     return self.get(db,'cases',call['case_id'])
-                raise ValueError('This call already has a linked case. Add a note to it, or start a new call for a separate request.')
+                raise ValueError('This intake already has a linked case. Start fresh intake for a separate request, or add a note to it.')
             stamp=now()
             case=dict(id='EG-'+uuid.uuid4().hex[:6].upper(), **fields, status='new', notes=[], revision=1,
                       created_at=stamp,updated_at=stamp)
             self.save(db,'cases',case)
             call['case_id']=case['id']
+            call['case_ids']=list(dict.fromkeys(call.get('case_ids',[])+[case['id']]))
             call.update(intake=fields,intake_stage='recorded')
             call['created_request']=json.dumps(fields,sort_keys=True)
             self.save(db,'calls',call)
+            db.execute('INSERT INTO creations VALUES(?,?,?,?)',(call_id,scope,request,json.dumps(case)))
             self.audit(db,case,{},'voice' if call['mode']=='voice' else 'test',call_id)
             return case
 
@@ -182,6 +207,7 @@ class Store:
             if call['case_id'] != case_id:
                 call.pop('created_request',None)
             call['case_id']=case_id
+            call['case_ids']=list(dict.fromkeys(call.get('case_ids',[])+[case_id]))
             call['intake_stage']='case_found'
             self.save(db,'calls',call)
             return case
