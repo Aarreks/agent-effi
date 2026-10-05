@@ -52,6 +52,12 @@ class ServiceAgent(Agent):
         self.latest_case=None
         self.last_user_text=''
         self.expecting_phone=False
+        self.completed_note_actions=[]
+
+    def take_note_actions(self):
+        actions=self.completed_note_actions
+        self.completed_note_actions=[]
+        return actions
 
     def observe_assistant_text(self,text):
         import re
@@ -149,8 +155,12 @@ class ServiceAgent(Agent):
     @function_tool
     async def add_case_note(self,context: RunContext,case_id: str,note: str):
         """Append confirmed resident information to the case already found in this call."""
-        return await self.request('PATCH',f'/cases/{case_id}',json=dict(call_id=self.call_id,
-                                  action_id=context.function_call.call_id,note=note))
+        action_id=context.function_call.call_id
+        result=await self.request('PATCH',f'/cases/{case_id}',json=dict(call_id=self.call_id,
+                                  action_id=action_id,note=note))
+        if isinstance(result,dict) and result.get('id')==case_id and 'error' not in result:
+            self.completed_note_actions.append(action_id)
+        return result
 
 
 server=AgentServer(host='127.0.0.1',num_idle_processes=1,initialize_process_timeout=30)
@@ -168,7 +178,7 @@ async def inspect_and_correct(client,session,call_id,item,correction_texts,is_cl
     elif call['case_id']:
         response=await client.get('/cases/'+call['case_id']);response.raise_for_status();case=response.json()
     transcript='\n'.join(f"{t['role']}: {t['text']}" for t in call.get('transcript',[]))
-    result=await review_reply(item['text'],transcript,case)
+    result=await review_reply(item['text'],transcript,case,confirmed_actions=(turn or {}).get('confirmed_actions',[]))
     status='checked'
     if result['intervene']:
         response=await client.get(f'/calls/{call_id}');response.raise_for_status();call=response.json()
@@ -247,7 +257,9 @@ async def service_session(ctx: JobContext):
     def conversation_item(event):
         item=event.item
         if not cleaned_up and isinstance(item,ChatMessage) and item.role in {'user','assistant'} and item.text_content:
-            queue.put_nowait(dict(id=item.id,role=item.role,text=item.text_content))
+            body=dict(id=item.id,role=item.role,text=item.text_content)
+            if item.role=='assistant':body['action_ids']=service_agent.take_note_actions()
+            queue.put_nowait(body)
             if item.role=='assistant':service_agent.observe_assistant_text(item.text_content)
             if item.role=='assistant' and item.text_content not in correction_texts:
                 review_queue.put_nowait(dict(id=item.id,text=item.text_content))

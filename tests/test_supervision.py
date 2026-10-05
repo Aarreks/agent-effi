@@ -65,6 +65,41 @@ def test_unconfirmed_additional_note_and_wrong_status_still_trigger():
         assert s.grounded_review(s.ModelVerdict(violation=violation,evidence=text),text,CASE)['intervene']
 
 
+NOTE_ACTION={'action_id':'actual-tool-action','kind':'add_note','case_id':CASE['id'],'note':'Resident update: the bin is still outside.'}
+
+
+@pytest.mark.parametrize('text',[
+    'I have added your note.',
+    'I added the same note again as you requested.',
+    'I saved the note "the bin is still outside".',
+    'I added the note that the bin is still outside again.',
+])
+def test_specific_saved_note_receipt_overrides_false_model_verdict(text):
+    result=s.grounded_review(s.ModelVerdict(violation='unsupported_save',evidence=text),text,CASE,[NOTE_ACTION])
+    assert not result['intervene'] and 'receipt' in result['reason']
+
+
+@pytest.mark.parametrize('text,actions',[
+    ('I added the note that the streetlight is broken.',[NOTE_ACTION]),
+    ('I added your note.',[{**NOTE_ACTION,'case_id':'EG-000000'}]),
+    ('I added your note.',[{**NOTE_ACTION,'kind':'change_status'}]),
+    ('I added your note.',[]),
+    ('I added your note to case EG-000000.',[NOTE_ACTION]),
+    ('I added the note and changed the status to resolved.',[NOTE_ACTION]),
+    ('I added two notes.',[NOTE_ACTION]),
+    ('I added two notes.',[NOTE_ACTION,NOTE_ACTION]),
+    ('I added the note "the bin is outside".',[{**NOTE_ACTION,'note':'The bin is not outside.'}]),
+])
+def test_unrelated_receipt_does_not_hide_unsupported_save(text,actions):
+    result=s.grounded_review(s.ModelVerdict(violation='unsupported_save',evidence=text),text,CASE,actions)
+    assert result['intervene']
+
+
+def test_saved_note_does_not_suppress_wrong_status_or_dispatch():
+    for violation,text in [('wrong_status','Your case is resolved.'),('unsupported_dispatch','I dispatched a crew.')]:
+        assert s.grounded_review(s.ModelVerdict(violation=violation,evidence=text),text,CASE,[NOTE_ACTION])['intervene']
+
+
 def test_unsupported_privacy_promise_gets_specific_correction():
     text='Residents generally do not see the notes added by staff. Those notes are for internal use.'
     result=s.grounded_review(s.ModelVerdict(violation='unsupported_privacy',evidence=text),text,CASE)

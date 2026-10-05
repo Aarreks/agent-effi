@@ -186,6 +186,13 @@ class Turn(BaseModel):
     id: str
     role: Literal['user','assistant']
     text: str = Field(min_length=1,max_length=20000)
+    action_ids: list[str] = Field(default_factory=list,max_length=16)
+
+    @field_validator('action_ids')
+    @classmethod
+    def valid_action_ids(cls,value):
+        if any(not action or len(action)>200 for action in value):raise ValueError('Invalid tool action ID')
+        return value
 
 
 class Caption(BaseModel):
@@ -297,7 +304,7 @@ async def active(call_id: str):
 
 @app.post('/calls/{call_id}/transcript')
 async def transcript(call_id: str,body: Turn):
-    result=store.turn(call_id,body.id,body.role,body.text)
+    result=store.turn(call_id,body.id,body.role,body.text,action_ids=body.action_ids)
     caption=captions.get(call_id,{})
     if caption.get('role')==body.role and caption.get('at','')<=result['at']:captions.pop(call_id,None)
     notify('transcript',call_id)

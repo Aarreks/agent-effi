@@ -174,7 +174,10 @@ async def main():
                     text=f'I want an update for an existing case. The case number is {spoken}. Please look it up.'
                 else:
                     text='I want to report missed trash collection. My name is Jordan Lee. My phone number is four one five, five five five, zero one three four. The location is twenty four Cedar Avenue. My trash was not collected this morning and the bin is still at the curb.'
-                await speak(text,'initial')
+                if lookup and '--lookup-text' in sys.argv:
+                    print('Resident text: Please look up case '+lookup,flush=True)
+                    await room.local_participant.send_text('Please look up case '+lookup,topic='lk.chat')
+                else:await speak(text,'initial')
                 for index in range(5):
                     call=await reply()
                     if call.get('case_id'):break
@@ -183,7 +186,10 @@ async def main():
                     confirmation='Yes, those details are correct. Please record my request.'
                     if not lookup and 'cedar' not in latest:
                         confirmation='The street name is Cedar, spelled C E D A R. The address is twenty four Cedar Avenue. The other details are correct. Please record my request with that address.'
-                    await speak(text if lookup else confirmation,'confirm-'+str(index))
+                    if lookup:
+                        print('Lookup clarification: sending the exact case ID as text after spoken recognition did not find it.',flush=True)
+                        await room.local_participant.send_text(f'Please look up case {lookup}.',topic='lk.chat')
+                    else:await speak(confirmation,'confirm-'+str(index))
                 if not call.get('case_id'):raise AssertionError('Agent did not create or find a case')
                 case_response=await client.get('/cases/'+call['case_id']);case_response.raise_for_status();case=case_response.json()
                 assert case['name']=='Jordan Lee' and case['issue_type']=='missed_collection',case
@@ -202,9 +208,22 @@ async def main():
                     assert case['id']==lookup,case
                     before=len(case['notes'])
                     await speak('Please add a note that the bin is still at the curb and the problem is continuing. We still see the trash outside the mailbox.','followup')
-                    await reply()
+                    call=await reply()
                     case=(await client.get('/cases/'+call['case_id'])).json()
                     assert len(case['notes'])==before+1 and case['notes'][-1]['actor']=='voice' and 'curb' in case['notes'][-1]['text'].lower(),case
+                    note_turn=next(t for t in reversed(call['transcript']) if t['role']=='assistant')
+                    receipts=note_turn.get('confirmed_actions',[])
+                    assert len(receipts)==1 and receipts[0]['kind']=='add_note' and receipts[0]['note']==case['notes'][-1]['text'],note_turn
+                    if '--repeat-note' in sys.argv:
+                        first_action=receipts[0]['action_id']
+                        await speak('Please add a separate note with the same text again. I explicitly want another copy of the note.','repeat-note')
+                        call=await reply()
+                        case=(await client.get('/cases/'+call['case_id'])).json()
+                        assert len(case['notes'])==before+2,case
+                        note_turn=next(t for t in reversed(call['transcript']) if t['role']=='assistant')
+                        receipts=note_turn.get('confirmed_actions',[])
+                        assert len(receipts)==1 and receipts[0]['action_id']!=first_action and receipts[0]['note']==case['notes'][-1]['text'],note_turn
+                        print('PASS: separately requested repeated note saved with its own backend-verified action receipt.',flush=True)
                 print('PASS: live spoken audio → recognized transcript → real model/tool → persisted case; agent audio received.',flush=True)
                 print('CASE',case['id'],flush=True)
             if public_check:
@@ -215,7 +234,7 @@ async def main():
                     assert own['transcript']
                     if call['case_id']:assert own['receipt']['id']==call['case_id']
                     else:assert own['receipt'] is None
-                    assert all('case_snapshot' not in turn for turn in own['transcript'])
+                    assert all('case_snapshot' not in turn and 'confirmed_actions' not in turn for turn in own['transcript'])
                     assert (await visitor.get('/cases',headers=headers)).status_code==401
                     assert (await visitor.get('/calls',headers=headers)).status_code==401
                     assert (await visitor.post('/public/calls/'+call_id+'/finish',headers=headers)).status_code==200

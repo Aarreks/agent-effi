@@ -88,16 +88,28 @@ class Store:
             self.save(db, 'calls', call)
         return call
 
-    def turn(self, identity, event_id, role, text):
+    def turn(self, identity, event_id, role, text,action_ids=()):
         with self.db() as db:
             call=self.get(db, 'calls', identity)
             value = dict(id=event_id, role=role, text=text, at=now())
             if role=='assistant':
                 value['case_snapshot']=self.get(db,'cases',call['case_id']) if call['case_id'] else None
+            if action_ids:
+                if role!='assistant':raise ValueError('Only assistant replies may reference saved actions')
+                receipts=[]
+                for action_id in dict.fromkeys(action_ids):
+                    action=db.execute('SELECT request,result FROM actions WHERE call_id=? AND action_id=?',(identity,action_id)).fetchone()
+                    if not action:raise ValueError('Tool action is not confirmed for this call')
+                    request=json.loads(action['request']);result=json.loads(action['result'])
+                    note=request['fields'].get('note')
+                    if not note or request['case_id']!=call['case_id'] or result.get('id')!=call['case_id']:
+                        raise ValueError('Tool action does not confirm a note on the linked case')
+                    receipts.append(dict(action_id=action_id,case_id=result['id'],kind='add_note',note=note,saved_at=result['updated_at']))
+                value['confirmed_actions']=receipts
             existing = db.execute('SELECT payload FROM turns WHERE call_id=? AND event_id=?',(identity,event_id)).fetchone()
             if existing:
                 old=json.loads(existing['payload'])
-                if old['text'] != text or old['role'] != role:
+                if old['text'] != text or old['role'] != role or old.get('confirmed_actions',[])!=value.get('confirmed_actions',[]):
                     raise ValueError('Transcript event ID reused with different content')
                 return old
             db.execute('INSERT INTO turns VALUES(?,?,?)',(identity,event_id,json.dumps(value)))

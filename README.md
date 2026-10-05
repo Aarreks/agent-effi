@@ -52,7 +52,7 @@ Calls are visible before a case exists. Recognized speech appears as a temporary
 
 ## Code and checks
 
-`backend/main.py` owns HTTP/WebSocket routes and analysis scheduling. `store.py` owns transactions, retry handling and audit records. `agent.py` owns the LiveKit session, four API tools, and the background review loop. `locations.py` extracts explicit address correction notes without changing saved fields. `supervision.py` checks reply claims and constructs corrections from backend facts. `analysis.py` owns structured post-call extraction, including attribution of notes to their actual call. `greeting.py` prepares the constant greeting before Cloud calls; the Windows launcher runs it automatically. The frontend uses one-origin HTTP rewrites and a direct localhost WebSocket.
+`backend/main.py` owns HTTP/WebSocket routes and analysis scheduling. `store.py` owns transactions, retry handling, audit records, and verification of saved-note receipts attached to replies. `agent.py` owns the LiveKit session, four API tools, and the background review loop. `locations.py` extracts explicit address correction notes without changing saved fields. `supervision.py` checks reply claims and constructs corrections from backend facts; a matching action receipt blocks a false unsaved-note correction. `analysis.py` owns structured post-call extraction, including attribution of notes to their actual call. `greeting.py` prepares the constant greeting before Cloud calls; the Windows launcher runs it automatically. The frontend uses one-origin HTTP rewrites and a direct localhost WebSocket.
 
 ```powershell
 .\check.ps1

@@ -56,6 +56,11 @@ If an interrupted reply asserts the old location then trails off at 'with an
 update note', the corrected address has not actually been spoken. Do not assume
 that an unspoken continuation would have explained the correction.
 Also flag a claim that the saved address field changed when only a note exists.
+confirmed_actions contains backend-verified tool receipts attached to this reply.
+A matching add_note receipt confirms that note was saved, including a separately
+requested repeat. Do not flag it as unsupported_save merely because it is redundant.
+An unrelated receipt does not confirm different note contents, a field change,
+dispatch, resolution, or any other action.
 
 Return a structured verdict. evidence must be an exact quote from the latest assistant
 utterance containing the false claim, not from the earlier transcript. For none use an
@@ -87,7 +92,43 @@ REASONS = {
 STATUSES = {'new': 'awaiting staff review', 'in_progress': 'in progress', 'resolved': 'resolved'}
 
 
-def grounded_review(verdict: ModelVerdict, assistant_text: str, case: dict | None) -> dict:
+def confirmed_note_claim(evidence: str,case: dict | None,actions: list[dict]) -> bool:
+    """Veto only note-save claims supported by a receipt for this exact reply.
+
+    This is deliberately a conservative text check, not a second model judgment.
+    Old notes elsewhere in the case never establish a newly successful action.
+    """
+    marker=re.search(r'\bnotes?\b',evidence,re.I)
+    if not marker or not case:return False
+    eligible=[action for action in actions if action.get('kind')=='add_note' and action.get('case_id')==case.get('id') and action.get('action_id')]
+    count=re.search(r'\b(one|two|three|four|five|\d+)\s*$',evidence[:marker.start()],re.I)
+    required=({'one':1,'two':2,'three':3,'four':4,'five':5}.get(count.group(1).lower()) or int(count.group(1))) if count else (2 if marker.group().lower()=='notes' else 1)
+    if len({action['action_id'] for action in eligible})<required:return False
+    identities=re.findall(r'\bEG-[A-Z0-9]+\b',evidence,re.I)
+    if any(identity.upper()!=case.get('id','').upper() for identity in identities):return False
+    if re.search(r'\b(?:changed|updated|marked|set)\b.{0,30}\b(?:status|resolved|in.progress)\b|\b(?:dispatched|deleted|removed)\b',evidence,re.I):return False
+    content=evidence[marker.end():]
+    quote=re.search(r'"([^"]+)"|“([^”]+)”',content)
+    if quote:content=next(group for group in quote.groups() if group is not None)
+    else:
+        content=re.split(r'[.!?]|\b(?:to|for|on) (?:the )?case\b|\b(?:let me know|is there anything|updating (?:from )?(?:the )?previous correction)\b',content,flags=re.I)[0]
+    def words(text):
+        text=re.sub(r'\s*\((?:previously|corrected from)\b.*','',text,flags=re.I)
+        text=re.sub(r'^(?:resident-reported address correction|reported updated address|resident update|resident correction):\s*','',text,flags=re.I)
+        text=re.sub(r'\b(\d+)(?:st|nd|rd|th)\b',r'\1',text.lower())
+        boilerplate={'a','an','the','your','about','that','address','correction','location','being','is','again','as','you','requested'}
+        return [word for word in re.findall(r'\w+',text) if word not in boilerplate]
+    claimed=words(content)
+    for action in eligible:
+        saved=words(action.get('note',''))
+        if not saved:continue
+        if not claimed:return True  # Generic 'I added your note' with a verified receipt.
+        if any(word in saved for word in ['not','never','no'])!=any(word in claimed for word in ['not','never','no']):continue
+        if any(saved[index:index+len(claimed)]==claimed for index in range(len(saved)-len(claimed)+1)):return True
+    return False
+
+
+def grounded_review(verdict: ModelVerdict, assistant_text: str, case: dict | None,confirmed_actions=()) -> dict:
     """Require evidence in this reply, and build the correction from trusted facts."""
     clear = SupervisorReview(intervene=False, reason='', correction='').model_dump()
     if verdict.violation == 'none' or not verdict.evidence.strip():
@@ -123,6 +164,8 @@ def grounded_review(verdict: ModelVerdict, assistant_text: str, case: dict | Non
         additional=re.search(r'\b(note|notes|update|updated|additional|added)\b',evidence)
         if identity and not additional:
             return clear  # A linked case confirms that the request was saved.
+        if confirmed_note_claim(verdict.evidence,case,confirmed_actions):
+            return SupervisorReview(intervene=False,reason='A backend-verified action receipt confirms this note was saved; the unsupported-save correction was suppressed.',correction='').model_dump()
     if verdict.violation=='wrong_status':
         claimed=set()
         if re.search(r'\b(new|awaiting (?:staff )?review|pending (?:staff )?review|waiting for (?:staff )?review)\b',evidence):claimed.add('new')
@@ -183,7 +226,7 @@ async def _model_verdict(payload: str) -> ModelVerdict:
         return result.output_parsed
 
 
-async def review_reply(assistant_text: str, transcript: str, case: dict | None) -> dict:
+async def review_reply(assistant_text: str, transcript: str, case: dict | None,confirmed_actions=()) -> dict:
     """Review with the selected provider. Errors/timeouts propagate for audit visibility.
 
     Consumers must distinguish a failed review from a completed safe verdict. This
@@ -194,7 +237,7 @@ async def review_reply(assistant_text: str, transcript: str, case: dict | None) 
     if not configured():
         raise ValueError('Supervisor model credentials are not configured')
     payload = json.dumps(dict(assistant_utterance=assistant_text, latest_transcript=transcript[-24000:],
-                              authoritative_case=case,location_context=location_context(case or {})), ensure_ascii=False)
+                              authoritative_case=case,location_context=location_context(case or {}),confirmed_actions=confirmed_actions), ensure_ascii=False)
     async with asyncio.timeout(REVIEW_TIMEOUT_SECONDS):
         verdict = await _model_verdict(payload)
-    return grounded_review(verdict, assistant_text, case)
+    return grounded_review(verdict, assistant_text, case,confirmed_actions)
